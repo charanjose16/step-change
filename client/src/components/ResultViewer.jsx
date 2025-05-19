@@ -2,28 +2,26 @@ import React, { useState, useEffect } from "react";
 import Modal from "./Modal";
 import axios from "../api/axiosConfig";
 import FullScreenGraph from "./FullScreenGraph";
-import RequirementListView from "./RequirementListView"; // Import new component
-import RequirementDetailView from "./RequirementDetailView"; // Import new component
+import RequirementListView from "./RequirementListView";
+import RequirementDetailView from "./RequirementDetailView";
 import { Loader2, AlertTriangle } from "lucide-react";
 
 export default function ResultViewer({ isOpen, onClose }) {
-    const [loadedRequirements, setLoadedRequirements] = useState(null); // Stores { files: [...] }
+    const [loadedRequirements, setLoadedRequirements] = useState(null);
     const [loadError, setLoadError] = useState("");
     const [searchTerm, setSearchTerm] = useState("");
     const [currentPage, setCurrentPage] = useState(1);
     const requirementsPerPage = 4;
-    const [selectedRequirement, setSelectedRequirement] = useState(null); // Stores the selected file object
+    const [selectedRequirement, setSelectedRequirement] = useState(null);
     const [detailGraphIndex, setDetailGraphIndex] = useState(0);
-    const [graphResponses, setGraphResponses] = useState([]); // Stores graph data for selected requirement
+    const [graphResponses, setGraphResponses] = useState([]);
     const [loadingGraph, setLoadingGraph] = useState(false);
     const [graphError, setGraphError] = useState("");
     const [isFullScreen, setIsFullScreen] = useState(false);
 
     // --- Effects ---
-    // Load data from localStorage when modal opens/isOpen changes
     useEffect(() => {
         if (isOpen) {
-            // Reset state on open
             setLoadError("");
             setLoadedRequirements(null);
             setSelectedRequirement(null);
@@ -55,7 +53,6 @@ export default function ResultViewer({ isOpen, onClose }) {
         }
     }, [isOpen]);
 
-    // Fetch graphs when a requirement is selected
     useEffect(() => {
         const fetchGraphs = async () => {
             if (!selectedRequirement?.requirements?.trim()) {
@@ -118,20 +115,19 @@ export default function ResultViewer({ isOpen, onClose }) {
         startIdx + requirementsPerPage
     );
 
-    // Adjust current page if it becomes invalid
     useEffect(() => {
         if (currentPage > totalPages) {
             setCurrentPage(totalPages);
         }
         if (currentPage > 1 && totalFilteredRequirements === 0) {
-             setCurrentPage(1);
+            setCurrentPage(1);
         }
     }, [totalPages, currentPage, totalFilteredRequirements]);
 
     // --- Event Handlers ---
     const handleSearchChange = (term) => {
         setSearchTerm(term);
-        setCurrentPage(1); // Reset page on new search
+        setCurrentPage(1);
     };
 
     const handlePageChange = (page) => {
@@ -144,7 +140,6 @@ export default function ResultViewer({ isOpen, onClose }) {
 
     const handleGoBack = () => {
         setSelectedRequirement(null);
-        // Optionally clear graph state here too if desired, though the effect handles it
     };
 
     const handleGraphIndexChange = (index) => {
@@ -159,13 +154,13 @@ export default function ResultViewer({ isOpen, onClose }) {
     let modalContent;
     if (loadError) {
         modalContent = (
-            <div className="flex flex-col items-center justify-center py-12 text-center text-red-600">
+            <div className="flex flex-col items-center justify-center py-12 text-center text-red-400">
                 <AlertTriangle className="h-10 w-10 mb-3" />
                 <h3 className="text-lg font-semibold mb-2">Error Loading Results</h3>
                 <p className="text-sm">{loadError}</p>
                 <button
                     onClick={onClose}
-                    className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 text-sm"
+                    className="mt-4 px-4 py-2 bg-teal-600 hover:bg-teal-500 text-white rounded-lg shadow-lg hover:shadow-teal-500/30 text-sm"
                 >
                     Close
                 </button>
@@ -173,13 +168,12 @@ export default function ResultViewer({ isOpen, onClose }) {
         );
     } else if (!loadedRequirements) {
         modalContent = (
-            <div className="flex items-center justify-center py-12 text-slate-600">
+            <div className="flex items-center justify-center py-12 text-teal-600">
                 <Loader2 className="h-8 w-8 animate-spin mr-3" />
                 Loading results...
             </div>
         );
     } else if (selectedRequirement) {
-        // Render Detail View
         modalContent = (
             <RequirementDetailView
                 requirement={selectedRequirement}
@@ -193,7 +187,6 @@ export default function ResultViewer({ isOpen, onClose }) {
             />
         );
     } else {
-        // Render List View
         modalContent = (
             <RequirementListView
                 requirements={pagedRequirements}
@@ -219,9 +212,13 @@ export default function ResultViewer({ isOpen, onClose }) {
     return (
         <>
             {/* Main Modal */}
-            <Modal isOpen={isOpen && !isFullScreen} onClose={onClose}>
-                 <div className="pt-4 pb-6 px-6 flex flex-col h-full max-h-[85vh]">
-                    <h2 className="text-xl font-bold text-slate-800 mb-5 border-b pb-3 flex-shrink-0">
+            <Modal
+                isOpen={isOpen && !isFullScreen}
+                onClose={onClose}
+                className="bg-white rounded-xl shadow-lg max-w-4xl w-full"
+            >
+                <div className="pt-4 pb-6 px-6 flex flex-col h-full max-h-[85vh]">
+                    <h2 className="text-xl font-bold text-teal-800 mb-5 border-b border-teal-200 pb-3 flex-shrink-0">
                         File Requirements Analysis
                     </h2>
                     <div className="flex-1 overflow-y-auto pr-2">
@@ -235,6 +232,7 @@ export default function ResultViewer({ isOpen, onClose }) {
                 <FullScreenGraph
                     chart={selectedGraphForFullscreen}
                     onClose={() => setIsFullScreen(false)}
+                    className="bg-teal-700 text-white shadow-lg"
                 />
             )}
         </>

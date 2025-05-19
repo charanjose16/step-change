@@ -3,8 +3,8 @@ import { Eye } from 'lucide-react';
 import { trimDescription } from '../utils/textUtils';
 
 export default function RequirementListView({
-    requirements, // The filtered and paged requirements
-    totalFilteredRequirements, // Total count *after* filtering
+    requirements,
+    totalFilteredRequirements,
     searchTerm,
     onSearchChange,
     currentPage,
@@ -12,9 +12,9 @@ export default function RequirementListView({
     onPageChange,
     onSelectRequirement,
     requirementsPerPage,
-    startIdx, // Starting index for keys/display
+    startIdx,
 }) {
-    // Pagination number generation logic (copied from original)
+    // Pagination number generation logic
     const maxVisiblePages = 5;
     let pageNumbers = [];
     if (totalPages <= maxVisiblePages) {
@@ -26,7 +26,9 @@ export default function RequirementListView({
             startPage = Math.max(1, endPage - maxVisiblePages + 1);
         }
         if (startPage > 1) pageNumbers.push(1, '...');
-        for (let i = startPage; i <= endPage; i++) { pageNumbers.push(i); }
+        for (let i = startPage; i <= endPage; i++) {
+            pageNumbers.push(i);
+        }
         if (endPage < totalPages) pageNumbers.push('...', totalPages);
     }
 
@@ -39,7 +41,7 @@ export default function RequirementListView({
                     value={searchTerm}
                     onChange={(e) => onSearchChange(e.target.value)}
                     placeholder="Filter by file name..."
-                    className="w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                    className="w-full px-3 py-2 border border-teal-300/40 rounded-lg shadow-lg bg-white text-teal-800 focus:outline-none focus:ring-2 focus:ring-teal-300 sm:text-sm"
                 />
             </div>
 
@@ -47,7 +49,7 @@ export default function RequirementListView({
             <div className="mb-4">
                 {totalFilteredRequirements === 0 ? (
                     <div className="flex flex-col items-center justify-center text-center py-10">
-                        <p className="text-slate-500 text-lg">
+                        <p className="text-red-400 text-lg">
                             {searchTerm
                                 ? "No files match your search."
                                 : "No requirements found."}
@@ -58,32 +60,32 @@ export default function RequirementListView({
                         {requirements.map((req, idx) => (
                             <li
                                 key={startIdx + idx}
-                                className="p-4 border border-slate-200 rounded-lg bg-white hover:bg-slate-50 transition-colors duration-150 cursor-pointer group"
+                                className="p-4 border border-teal-200 rounded-lg bg-teal-50 hover:bg-teal-100 transition-colors duration-150 cursor-pointer group shadow-lg"
                                 onClick={() => onSelectRequirement(req)}
                             >
                                 <div className="flex justify-between items-center">
                                     <div className="flex-1 mr-4 overflow-hidden">
                                         <h3
-                                            className="text-base font-semibold text-slate-800 mb-1 group-hover:text-indigo-600 truncate"
+                                            className="text-base font-semibold text-teal-800 mb-1 group-hover:text-teal-600 truncate"
                                             title={req.file_name || "Unknown File"}
                                         >
                                             {req.file_name || "Unknown File"}
                                         </h3>
                                         <p
-                                            className="text-xs text-slate-500 mb-2 truncate"
+                                            className="text-xs text-teal-600 mb-2 truncate"
                                             title={req.relative_path || "No path available"}
                                         >
                                             {req.relative_path || "No path available"}
                                         </p>
-                                        <p className="text-sm text-slate-700">
+                                        <p className="text-sm text-teal-700">
                                             {trimDescription(req.requirements)}
                                         </p>
                                     </div>
                                     <button
                                         tabIndex={-1}
-                                        className="ml-auto flex-shrink-0 bg-teal-600 text-white px-3 py-1.5 rounded hover:bg-teal-700 transition-colors text-xs flex items-center"
+                                        className="ml-auto flex-shrink-0 bg-teal-600 text-white px-3 py-1.5 rounded-lg hover:bg-teal-500 transition-colors text-xs flex items-center shadow-lg hover:shadow-teal-500/30"
                                     >
-                                        <Eye className="w-3.5 h-3.5 mr-1" />
+                                        <Eye className="w-3.5 h-3.5 mr-1 text-teal-300" />
                                         View
                                     </button>
                                 </div>
@@ -95,8 +97,8 @@ export default function RequirementListView({
 
             {/* Pagination Controls */}
             {totalPages > 1 && (
-                <div className="flex-shrink-0 flex flex-col sm:flex-row justify-between items-center pt-4 border-t border-slate-200 gap-3">
-                    <div className="text-sm text-slate-500">
+                <div className="flex-shrink-0 flex flex-col sm:flex-row justify-between items-center pt-4 border-t border-teal-200 gap-3">
+                    <div className="text-sm text-teal-600">
                         Showing {Math.min(totalFilteredRequirements, startIdx + 1)} to{" "}
                         {Math.min(
                             totalFilteredRequirements,
@@ -108,7 +110,7 @@ export default function RequirementListView({
                         <button
                             onClick={() => onPageChange(currentPage - 1)}
                             disabled={currentPage === 1}
-                            className="px-3 py-1 rounded border border-slate-300 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="px-3 py-1 rounded-lg border border-teal-300 text-sm font-medium text-teal-700 hover:bg-teal-100 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
                         >
                             Previous
                         </button>
@@ -116,7 +118,7 @@ export default function RequirementListView({
                             page === "..." ? (
                                 <span
                                     key={`ellipsis-${i}`}
-                                    className="px-2 py-1 text-slate-400 self-end"
+                                    className="px-2 py-1 text-teal-400 self-end"
                                 >
                                     …
                                 </span>
@@ -124,10 +126,10 @@ export default function RequirementListView({
                                 <button
                                     key={page}
                                     onClick={() => onPageChange(page)}
-                                    className={`px-3 py-1 rounded text-sm font-medium border ${
+                                    className={`px-3 py-1 rounded-lg text-sm font-medium border shadow-lg ${
                                         currentPage === page
-                                            ? "bg-indigo-600 text-white border-indigo-600"
-                                            : "border-slate-300 text-slate-700 hover:bg-slate-100"
+                                            ? "bg-teal-600 text-white border-teal-600"
+                                            : "border-teal-300 text-teal-700 hover:bg-teal-100"
                                     }`}
                                 >
                                     {page}
@@ -137,7 +139,7 @@ export default function RequirementListView({
                         <button
                             onClick={() => onPageChange(currentPage + 1)}
                             disabled={currentPage === totalPages}
-                            className="px-3 py-1 rounded border border-slate-300 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="px-3 py-1 rounded-lg border border-teal-300 text-sm font-medium text-teal-700 hover:bg-teal-100 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
                         >
                             Next
                         </button>

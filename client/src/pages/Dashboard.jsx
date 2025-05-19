@@ -1,7 +1,7 @@
 import React, { useState, useEffect, Suspense, lazy } from "react";
 import axios from "../api/axiosConfig";
 import Navbar from "../components/Navbar";
-import { XCircle, CheckCircle, AlertCircle, Download, RotateCcw } from "lucide-react"; // Added Download & RotateCcw icons
+import { XCircle, CheckCircle, AlertCircle, Download, RotateCcw, Github, FolderOpen, Code, FileText } from "lucide-react";
 import { isValidGithubUrl, isValidFilePath } from "../utils/validation";
 import { jsPDF } from "jspdf";
 
@@ -13,51 +13,46 @@ export default function Dashboard() {
     const [result, setResult] = useState(null);
     const [error, setError] = useState(null);
     const [showResultsViewer, setShowResultsViewer] = useState(false);
-    const [analysisComplete, setAnalysisComplete] = useState(false); // Track analysis success
+    const [analysisComplete, setAnalysisComplete] = useState(false);
 
-    // Load previous results from local storage on mount
     useEffect(() => {
         const storedResult = localStorage.getItem("requirementsOutput");
         if (storedResult) {
             try {
                 const parsedResult = JSON.parse(storedResult);
                 setResult(parsedResult);
-                setAnalysisComplete(true); // Set analysis complete if results are loaded
-                // --- Add this line to automatically show the viewer ---
-                
-                // ------------------------------------------------------
+                setAnalysisComplete(true);
+                setShowResultsViewer(true);
             } catch (e) {
                 console.error("Failed to parse stored results:", e);
-                localStorage.removeItem("requirementsOutput"); // Clear invalid data
+                localStorage.removeItem("requirementsOutput");
             }
         }
-    }, []);  // Empty dependency array ensures this runs only once on mount
+    }, []);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
         setError(null);
-        setResult(null); // Clear previous results before new analysis
+        setResult(null);
         setShowResultsViewer(false);
-        setAnalysisComplete(false); // Reset analysis status
-        localStorage.removeItem("requirementsOutput"); // Clear old results from storage
+        setAnalysisComplete(false);
+        localStorage.removeItem("requirementsOutput");
 
-        // Validate the entered link
         if (!isValidGithubUrl(link) && !isValidFilePath(link)) {
-            setError("Please enter a valid GitHub URL or an absolute file path.");
+            setError("Please enter a valid GitHub URL or absolute file path.");
             return;
         }
 
         setLoading(true);
 
         try {
-            // POST to the /analysis endpoint.
             const res = await axios.post("/analysis", { link });
             console.log("Response:", res.data);
             setResult(res.data);
-            // Save result to local storage on success
             localStorage.setItem("requirementsOutput", JSON.stringify(res.data));
-            setAnalysisComplete(true); // Mark analysis as complete
-            setError(null); // Clear any previous errors
+            setAnalysisComplete(true);
+            setShowResultsViewer(true);
+            setError(null);
         } catch (err) {
             console.error(err);
             const errMsg =
@@ -65,28 +60,23 @@ export default function Dashboard() {
                     ? err.response.data.detail
                     : "Failed to analyze codebase.";
             setError(errMsg);
-            setResult(null); // Ensure result is null on error
-            setAnalysisComplete(false); // Mark analysis as failed/incomplete
-            localStorage.removeItem("requirementsOutput"); // Clear storage on error
+            setResult(null);
+            setAnalysisComplete(false);
+            localStorage.removeItem("requirementsOutput");
         } finally {
             setLoading(false);
         }
     };
 
-    // Reset Handler
     const handleReset = () => {
         setResult(null);
         setAnalysisComplete(false);
         setError(null);
-        setShowResultsViewer(false); // Close viewer if open
+        setShowResultsViewer(false);
         localStorage.removeItem("requirementsOutput");
-        // Optionally clear the input link as well:
-        // setLink("");
         console.log("Analysis results cleared.");
     };
 
-
-    // PDF Download Handler using jsPDF with AutoTable (explicit call)
     const downloadPDF = () => {
         console.log("Result state on download:", JSON.stringify(result, null, 2));
 
@@ -101,264 +91,294 @@ export default function Dashboard() {
         const pageWidth = doc.internal.pageSize.width || doc.internal.pageSize.getWidth();
         const margin = 15;
         const maxLineWidth = pageWidth - margin * 2;
-        let yPos; // Initialize yPos inside the loop
+        let yPos;
 
-        // --- PDF Header (Only for the first page initially) ---
         const drawHeader = (docInstance, currentY) => {
             docInstance.setFontSize(18);
             docInstance.setFont(undefined, "bold");
             docInstance.setTextColor(40, 58, 90);
             docInstance.text("Codebase Analysis Report", margin, currentY);
-            currentY += 6; // Move down
+            currentY += 6;
             docInstance.setDrawColor(40, 58, 90);
-            docInstance.line(margin, currentY, pageWidth - margin, currentY); // Underline header
-            currentY += 12; // Space after header
+            docInstance.line(margin, currentY, pageWidth - margin, currentY);
+            currentY += 12;
             return currentY;
         };
 
-        yPos = margin + 8; // Initial Y position for the first page header
+        yPos = margin + 8;
         yPos = drawHeader(doc, yPos);
 
-        // --- Content ---
         result.requirements.forEach((file, index) => {
-            // Add a new page for every file *after* the first one
             if (index > 0) {
                 doc.addPage();
-                yPos = margin + 8; // Reset Y for the new page's header
-                // Optionally redraw header on each new page:
-                // yPos = drawHeader(doc, yPos);
-                // If not redrawing header, just reset yPos for content:
-                yPos = margin; // Reset Y to top margin for content
+                yPos = margin + 8;
+                yPos = margin;
             }
 
-            // --- File Content ---
             const fileNameText = `File ${index + 1}: ${file.file_name || "Unknown File"}`;
             const pathText = `Path: ${file.relative_path || "N/A"}`;
             const reqHeaderText = "Requirements:";
             const requirementsText = file.requirements || "No requirements provided.";
 
-            // Add File Name
             doc.setFontSize(12);
             doc.setFont(undefined, "bold");
-            doc.setTextColor(0, 128, 128); // Teal color for file name
+            doc.setTextColor(0, 128, 128);
             const fileNameHeight = doc.getTextDimensions(fileNameText, { maxWidth: maxLineWidth }).h;
             doc.text(fileNameText, margin, yPos, { maxWidth: maxLineWidth });
-            yPos += fileNameHeight + 2; // Move down after file name
+            yPos += fileNameHeight + 2;
 
-            // Add Path
             doc.setFontSize(10);
             doc.setFont(undefined, "normal");
-            doc.setTextColor(100); // Gray color for path
+            doc.setTextColor(100);
             const pathHeight = doc.getTextDimensions(pathText, { maxWidth: maxLineWidth }).h;
             doc.text(pathText, margin, yPos, { maxWidth: maxLineWidth });
-            yPos += pathHeight + 4; // Move down after path
+            yPos += pathHeight + 4;
 
-            // Add Requirements Header
             doc.setFont(undefined, "bolditalic");
-            doc.setTextColor(50); // Dark gray
+            doc.setTextColor(50);
             const reqHeaderHeight = doc.getTextDimensions(reqHeaderText, { maxWidth: maxLineWidth }).h;
             doc.text(reqHeaderText, margin, yPos, { maxWidth: maxLineWidth });
             yPos += reqHeaderHeight;
 
-            // Add Requirements Text
             doc.setFont(undefined, "normal");
-            doc.setTextColor(0); // Black for requirements text
+            doc.setTextColor(0);
             const requirementsLines = doc.splitTextToSize(requirementsText, maxLineWidth);
-            // Check if requirements text itself needs pagination (unlikely for single file per page, but good practice)
+            
             requirementsLines.forEach(line => {
-                const lineHeight = doc.getTextDimensions(line, { maxWidth: maxLineWidth }).h * 1.15; // Add some spacing
-                if (yPos + lineHeight > pageHeight - margin - 10) { // Check space before footer
+                const lineHeight = doc.getTextDimensions(line, { maxWidth: maxLineWidth }).h * 1.15;
+                if (yPos + lineHeight > pageHeight - margin - 10) {
                     doc.addPage();
-                    yPos = margin; // Reset Y to top margin
-                    // Optionally redraw header if desired on overflow pages
+                    yPos = margin;
                 }
                 doc.text(line, margin, yPos);
                 yPos += lineHeight;
             });
-            // Add spacing after the requirements block if needed, before the next file (which starts on a new page)
-            // yPos += 10;
         });
 
-        // --- Footer on all pages ---
         const pageCount = doc.internal.getNumberOfPages();
         const generationDate = new Date().toLocaleDateString();
         for (let i = 1; i <= pageCount; i++) {
-            doc.setPage(i); // Go to page i
-            const footerY = pageHeight - margin + 8; // Position footer slightly below bottom margin
+            doc.setPage(i);
+            const footerY = pageHeight - margin + 8;
             doc.setFontSize(8);
             doc.setFont(undefined, "normal");
             doc.setTextColor(150);
-            // Page number
             doc.text(`Page ${i} of ${pageCount}`, pageWidth / 2, footerY, { align: 'center' });
-            // Generation date
             doc.text(`Generated on: ${generationDate}`, margin, footerY);
         }
 
-        doc.save("CodebaseAnalysisReport_Paged.pdf"); // Changed filename
+        doc.save("CodebaseAnalysisReport.pdf");
     };
 
-
     return (
-        <div className="h-screen flex flex-col">
+        <div className="min-h-screen flex flex-col bg-gray-50">
             <Navbar />
-            <main className="flex flex-1 bg-gray-50">
-                <div className="flex flex-col w-full h-full bg-white p-6 rounded shadow">
-                    <h2 className="text-teal-700 text-xl font-semibold mb-4">
-                        Analyze Codebase
-                    </h2>
-                    <form onSubmit={handleSubmit} className="space-y-4">
-                        <div className="relative">
-                            <label htmlFor="link" className="block text-gray-700 mb-1">
-                                GitHub URL or Local Path
-                            </label>
-                            <div className="relative">
-                                <input
-                                    type="text"
-                                    id="link"
-                                    name="link"
-                                    autoComplete="on"
-                                    value={link}
-                                    onChange={(e) => {
-                                        setLink(e.target.value);
-                                        // Clear status when input changes
-                                        if (error) setError(null);
-                                        // Don't clear results automatically on input change if they came from local storage initially
-                                        // Only clear if user explicitly resets or starts a new analysis
-                                        // if (analysisComplete) setAnalysisComplete(false);
-                                        // if (result) setResult(null);
-                                        // localStorage.removeItem("requirementsOutput");
-                                    }}
-                                    placeholder="e.g. https://github.com/you/repo or C:\path\to\project"
-                                    className={`w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 ${
-                                        error
-                                            ? "border-red-500 focus:ring-red-500"
-                                            : "border-gray-300 focus:ring-teal-500"
-                                    }`}
-                                    required
-                                />
-                                {link && (
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            setLink("");
-                                            // Optionally reset analysis if input is cleared manually
-                                            // handleReset();
-                                        }}
-                                        className="absolute inset-y-0 right-0 flex items-center pr-2 text-gray-500 hover:text-gray-700"
-                                        title="Clear input"
-                                    >
-                                        <XCircle className="h-5 w-5" />
-                                    </button>
-                                )}
-                            </div>
-                            {error && !loading && !analysisComplete && (
-                                <p className="text-red-600 mt-1 text-xs flex items-center">
-                                    <AlertCircle className="w-4 h-4 mr-1" /> {error}
-                                </p>
-                            )}
+            <div className="flex-1 container mx-auto px-4 py-6">
+                {/* Header/Input Form Section */}
+                <div className="bg-gradient-to-br from-teal-700 to-teal-600 rounded-2xl shadow-lg overflow-hidden">
+                    <div className="p-6">
+                        <div className="flex items-center mb-4">
+                            <Code className="h-10 w-10 text-teal-200 mr-3" />
+                            <h1 className="text-3xl font-bold text-white">Code to Business Logic Converter</h1>
                         </div>
-
-                        {/* Submit and Buttons Area */}
-                        <div className="flex items-center space-x-3 pt-2 flex-wrap gap-y-2"> {/* Added flex-wrap and gap-y */}
-                            <button
-                                type="submit"
-                                disabled={loading || !link}
-                                className={`px-5 py-2 rounded text-white transition flex items-center justify-center min-w-[150px] ${
-                                    loading || !link
-                                        ? "bg-slate-400 cursor-not-allowed"
-                                        : "bg-teal-700 hover:bg-teal-800"
-                                }`}
-                            >
-                                {loading ? (
-                                    <>
-                                        <svg
-                                            className="animate-spin -ml-1 mr-3 h-5 w-5 text-white"
-                                            xmlns="http://www.w3.org/2000/svg"
-                                            fill="none"
-                                            viewBox="0 0 24 24"
+                        <p className="text-teal-100 text-sm mb-4 max-w-2xl leading-relaxed">
+                            Transform your codebase into clear business requirements. Enter a GitHub URL or local path to start.
+                        </p>
+                        
+                        <form onSubmit={handleSubmit} className="space-y-4">
+                            <div className="bg-white/10 backdrop-blur-sm p-6 rounded-2xl border border-teal-300/20 shadow-lg">
+                                <div className="flex flex-col md:flex-row gap-4">
+                                    <div className="flex-1">
+                                        <label htmlFor="link" className="block text-teal-100 font-semibold text-sm mb-2">
+                                            Project Source
+                                        </label>
+                                        <div className="relative">
+                                            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                                {isValidGithubUrl(link) ? (
+                                                    <Github className="h-5 w-5 text-teal-300" />
+                                                ) : (
+                                                    <FolderOpen className="h-5 w-5 text-teal-300" />
+                                                )}
+                                            </div>
+                                            <input
+                                                type="text"
+                                                id="link"
+                                                name="link"
+                                                autoComplete="on"
+                                                value={link}
+                                                onChange={(e) => {
+                                                    setLink(e.target.value);
+                                                    if (error) setError(null);
+                                                }}
+                                                placeholder="Enter GitHub URL or local file path"
+                                                className={`w-full bg-white/20 backdrop-blur-sm border text-white pl-10 pr-10 py-3 rounded-lg focus:outline-none focus:ring-2 text-sm ${
+                                                    error
+                                                        ? "border-red-400 focus:ring-red-400"
+                                                        : "border-teal-300/40 focus:ring-teal-300"
+                                                }`}
+                                                required
+                                                aria-label="Project source URL or file path"
+                                            />
+                                            {link && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setLink("")}
+                                                    className="absolute inset-y-0 right-0 flex items-center pr-3 text-teal-300 hover:text-white transition-colors"
+                                                    title="Clear input"
+                                                    aria-label="Clear input"
+                                                >
+                                                    <XCircle className="h-5 w-5" />
+                                                </button>
+                                            )}
+                                        </div>
+                                        {error && !loading && !analysisComplete && (
+                                            <p className="text-red-400 mt-2 text-xs flex items-center">
+                                                <AlertCircle className="w-4 h-4 mr-1 flex-shrink-0" /> {error}
+                                            </p>
+                                        )}
+                                    </div>
+                                    
+                                    <div className="flex items-end">
+                                        <button
+                                            type="submit"
+                                            disabled={loading || !link}
+                                            className={`h-12 px-6 rounded-lg text-white font-semibold text-sm transition-all duration-200 flex items-center justify-center shadow-lg hover:scale-105 ${
+                                                loading || !link
+                                                    ? "bg-teal-400/50 cursor-not-allowed"
+                                                    : "bg-teal-600 hover:bg-teal-500 hover:shadow-teal-500/40"
+                                            }`}
+                                            aria-label="Generate business logic"
                                         >
-                                            <circle
-                                                className="opacity-25"
-                                                cx="12"
-                                                cy="12"
-                                                r="10"
-                                                stroke="currentColor"
-                                                strokeWidth="4"
-                                            ></circle>
-                                            <path
-                                                className="opacity-75"
-                                                fill="currentColor"
-                                                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                                            ></path>
-                                        </svg>
-                                        Analyzing...
-                                    </>
-                                ) : (
-                                    "Analyze Codebase"
-                                )}
-                            </button>
-
-                            {/* Conditionally show View Results and Download PDF buttons */}
-                            {result && analysisComplete && !loading && (
-                                <>
-                                    <button
-                                        type="button"
-                                        onClick={() => setShowResultsViewer(true)}
-                                        className="px-5 py-2 rounded text-white bg-indigo-600 hover:bg-indigo-700 transition flex items-center"
-                                    >
-                                        <CheckCircle className="w-5 h-5 mr-2" /> View Results
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={downloadPDF}
-                                        className="px-5 py-2 rounded text-white bg-green-600 hover:bg-green-700 transition flex items-center"
-                                        title="Download PDF Report"
-                                    >
-                                        <Download className="w-5 h-5 mr-2" /> Download PDF
-                                    </button>
-                                </>
-                            )}
-
-                            {/* Reset Button */}
-                            {/* Show reset button if there are results or analysis was completed */}
-                            {(result || analysisComplete) && !loading && (
-                                <button
-                                    type="button"
-                                    onClick={handleReset}
-                                    className="px-5 py-2 rounded text-white bg-red-600 hover:bg-red-700 transition flex items-center"
-                                    title="Clear current analysis results"
-                                >
-                                    <RotateCcw className="w-5 h-5 mr-2" /> Reset Analysis
-                                </button>
-                            )}
-                        </div>
-                        {/* Display general error message below buttons if analysis failed */}
-                        {error && !loading && !analysisComplete && (
-                             <p className="text-red-600 mt-2 text-sm flex items-center">
-                                <AlertCircle className="w-5 h-5 mr-1 flex-shrink-0" /> {error}
-                            </p>
-                        )}
-                    </form>
-
-                    {/* Result Viewer Modal */}
-                    {showResultsViewer && result && (
-                        <Suspense
-                            fallback={
-                                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                                    <div className="text-white">Loading Results Viewer...</div>
+                                            {loading ? (
+                                                <>
+                                                    <svg
+                                                        className="animate-spin -ml-2 mr-2 h-5 w-5 text-white"
+                                                        xmlns="http://www.w3.org/2000/svg"
+                                                        fill="none"
+                                                        viewBox="0 0 24 24"
+                                                    >
+                                                        <circle
+                                                            className="opacity-25"
+                                                            cx="12"
+                                                            cy="12"
+                                                            r="10"
+                                                            stroke="currentColor"
+                                                            strokeWidth="4"
+                                                        ></circle>
+                                                        <path
+                                                            className="opacity-75"
+                                                            fill="currentColor"
+                                                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                                                        ></path>
+                                                    </svg>
+                                                    Analyzing...
+                                                </>
+                                            ) : (
+                                                "Generate Business Logic"
+                                            )}
+                                        </button>
+                                    </div>
                                 </div>
-                            }
-                        >
-                            <ResultViewer
-                                isOpen={showResultsViewer}
-                                onClose={() => setShowResultsViewer(false)}
-                                // Pass result data to the viewer if it needs it directly
-                                // analysisResult={result}
-                            />
-                        </Suspense>
-                    )}
+                            </div>
+                        </form>
+                    </div>
                 </div>
-            </main>
+
+                {analysisComplete && result && (
+                    <div className="mt-6 animate-fadeIn">
+                        {/* Analysis Summary and Detailed Results */}
+                        <div className="bg-white rounded-2xl shadow-lg p-4 hover:shadow-2xl transition-shadow duration-300">
+                            <div className="flex items-center justify-between border-b border-teal-200 pb-3 mb-4">
+                                <div className="flex items-center">
+                                    <CheckCircle className="h-6 w-6 text-green-500 mr-2" />
+                                    <h2 className="text-xl font-bold text-teal-800">Analysis Results</h2>
+                                    <div className="flex items-center bg-teal-50 rounded-xl p-1 shadow-sm hover:shadow-xl transition-shadow duration-300 ml-5">
+                                        <div className="h-8 w-8 rounded-full bg-teal-100 flex items-center justify-center mr-3">
+                                            <FileText className="h-4 w-4 text-teal-600" />
+                                        </div>
+                                        <div>
+                                            <div className="font-semibold text-teal-800 text-xs">Files Analyzed</div>
+                                            <div className="text-sm font-semibold text-teal-600">{result.requirements?.length || 0} <span className="text-sm mr-2">Code files processed</span></div>
+                                            
+                                        </div>
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={handleReset}
+                                    className="flex items-center px-3 py-1 bg-teal-100 hover:bg-teal-200 text-teal-800 rounded-lg transition-all duration-200 text-xs font-semibold shadow-lg hover:scale-105"
+                                    aria-label="Reset analysis results"
+                                >
+                                    <RotateCcw className="w-4 h-4 mr-1" />
+                                    Reset
+                                </button>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                {/* First Row: Description */}
+                                <p className="text-teal-600 text-sm md:col-span-3 mx-auto max-w-prose leading-relaxed text-center">
+                                    Explore the business logic extracted from each file for a comprehensive understanding of your codebase.
+                                </p>
+
+                                {/* Second Row: Summary and Button */}
+                                {/* <div className="md:col-span-2 grid md:grid-cols-2 gap-4 items-center ml-60"> */}
+                                    
+
+                                <div className="flex justify-center md:col-span-3 ">
+                                    <button
+                                        onClick={() => setShowResultsViewer(true)}
+                                        className="flex items-center justify-center px-4 py-2 bg-teal-600 hover:bg-teal-500 text-white rounded-lg transition-all duration-200 shadow-lg hover:shadow-teal-500/40 hover:scale-105 text-sm font-semibold"
+                                        aria-label="View detailed analysis results"
+                                    >
+                                        <Code className="w-4 h-4 mr-1" />
+                                        View Detailed Results
+                                    </button>
+                                </div>
+                                {/* </div> */}
+                            </div>
+                        </div>
+
+                        {/* Analysis PDF Download Section */}
+                        <div className="bg-white rounded-2xl shadow-lg p-6 mt-4 hover:shadow-2xl transition-shadow duration-300">
+                            <div className="flex items-center border-b border-teal-200 pb-3 mb-4">
+                                <Download className="h-5 w-5 text-emerald-600 mr-2" />
+                                <h2 className="text-xl font-bold text-teal-800">Export Documentation</h2>
+                            </div>
+                            <p className="text-teal-600 text-sm mb-4 mx-auto max-w-prose leading-relaxed text-center">
+                                Download a PDF report with all business logic requirements for documentation and sharing.
+                            </p>
+                            <div className="flex justify-center">
+                                <button
+                                    onClick={downloadPDF}
+                                    className="flex items-center px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-all duration-200 shadow-lg hover:shadow-emerald-500/40 hover:scale-105 text-sm font-semibold"
+                                    aria-label="Download PDF report"
+                                >
+                                    <Download className="w-4 h-4 mr-1" />
+                                    Download PDF
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </div>
+
+            {/* Result Viewer Modal */}
+            {showResultsViewer && result && (
+                <Suspense
+                    fallback={
+                        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
+                            <div className="bg-white p-6 rounded-2xl shadow-lg flex flex-col items-center">
+                                <div className="animate-spin w-10 h-10 border-4 border-teal-600 border-t-transparent rounded-full mb-3"></div>
+                                <p className="text-teal-800 font-semibold text-sm">Loading Results...</p>
+                            </div>
+                        </div>
+                    }
+                >
+                    <ResultViewer
+                        isOpen={showResultsViewer}
+                        onClose={() => setShowResultsViewer(false)}
+                    />
+                </Suspense>
+            )}
         </div>
     );
 }
