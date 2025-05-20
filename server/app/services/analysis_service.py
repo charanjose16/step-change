@@ -49,45 +49,86 @@ def count_tokens(text: str, model: str = "gpt-4o") -> int:
 
 
 
-async def generate_graph_from_requirement(requirement: str, target_graph: str) -> GraphResponse:
+async def generate_graph_from_requirement(requirement: str, target_graph: str, file_content: str = None) -> GraphResponse:
+    # If no file content is provided, use a generic approach
+    if not file_content:
+        file_content = requirement
+
     if target_graph.lower() == "entity relationship diagram":
-        extra_guidelines = (
-            "Ensure to depict entities as nodes and relationships as edges. "
-            "Define nodes with unique identifiers and concise labels. "
-            "Represent relationships with directional arrows that clearly indicate how entities are connected. "
+        prompt = (
+            "Create a precise Mermaid Entity-Relationship Diagram with strict syntax rules:\n"
+            f"Code Context:\n```\n{file_content}\n```\n\n"
+            "STRICT GUIDELINES:\n"
+            "1. ALWAYS use graph TD or graph LR\n"
+            "2. Use ONLY square brackets [Entity]\n"
+            "3. Connect with --> or ---\n"
+            "4. NO special characters in node names\n"
+            "5. Keep diagram SIMPLE and VALID\n"
+            "Example:\n"
+            "```mermaid\n"
+            "graph TD\n"
+            "    A[Customer] --> B[Order]\n"
+            "    B --> C[Product]\n"
+            "```\n"
+            "Return ONLY valid Mermaid code."
         )
     elif target_graph.lower() == "requirement diagram":
-        extra_guidelines = (
-            "Focus on highlighting functional requirements. "
-            "Nodes should represent distinct requirements or modules, with edges indicating dependencies or flow. "
-            "Keep the diagram terse and aligned with mermaid syntax."
+        prompt = (
+            "Create a precise Mermaid Requirement Diagram with strict syntax rules:\n"
+            f"Code Context:\n```\n{file_content}\n```\n\n"
+            "STRICT GUIDELINES:\n"
+            "1. ALWAYS use graph TD or graph LR\n"
+            "2. Use ONLY square brackets [Requirement]\n"
+            "3. Connect with --> or ---\n"
+            "4. NO special characters in node names\n"
+            "5. Keep diagram SIMPLE and VALID\n"
+            "Example:\n"
+            "```mermaid\n"
+            "graph TD\n"
+            "    A[User Authentication] --> B[Access Control]\n"
+            "    B --> C[Data Validation]\n"
+            "```\n"
+            "Return ONLY valid Mermaid code."
         )
     else:
-        extra_guidelines = ""
-        
-    prompt = (
-        f"create a {target_graph} code with the prompts: {requirement}\n\n"
-        "be terse and only return the mermaid code. The guidelines are: "
-        "Nodes are defined using square brackets ([...]) with a mandatory identifier and label. Don't use any other brackets. "
-        "Edges are defined only using arrows (-->, <--) to connect nodes. Edge directions (-->, ->, <--, etc.) define the direction of the flow or relationship between nodes. "
-        "Arrow styles (->>, --x, -.->, etc.) can be used to customize the appearance of edges. "
-        f"{extra_guidelines}"
-        "Don't give any additional comments, notes, starting lines, or any unnecessary backticks or headings. "
-        "Give error-free code and make sure the output can be rendered by mermaid. Use documentation from mermaid.js.org. "
-        "Only return mermaid code compatible for mermaid.js."
-    )
+        return GraphResponse(
+            target_graph=target_graph, 
+            generated_code=f"Unsupported graph type: {target_graph}"
+        )
+
     try:
         result = await asyncio.to_thread(llm_config._llm.complete, prompt)
         generated_code = result.text.strip()
+
+        # Validate and clean the generated code
+        if not generated_code or len(generated_code.split('\n')) < 2:
+            return GraphResponse(
+                target_graph=target_graph, 
+                generated_code=f"Error: Insufficient graph definition for {target_graph}"
+            )
+
+        # Remove markdown code block markers if present
+        pattern = r"```mermaid\s*([\s\S]*?)\s*```"
+        match = re.search(pattern, generated_code)
+        if match:
+            generated_code = match.group(1).strip()
+
+        # Additional syntax validation
+        lines = generated_code.split('\n')
+        if not lines[0].startswith('graph'):
+            return GraphResponse(
+                target_graph=target_graph, 
+                generated_code=f"Error: Invalid graph type. Must start with 'graph TD' or 'graph LR'"
+            )
+
+        return GraphResponse(target_graph=target_graph, generated_code=generated_code)
+
     except Exception as e:
-        logger.error(f"LLM error in graph generation for {target_graph}: {e}")
-        return GraphResponse(target_graph=target_graph, generated_code=f"Error: {str(e)}")
-    
-    pattern = r"```mermaid\s*([\s\S]*?)\s*```"
-    match = re.search(pattern, generated_code)
-    if match:
-        generated_code = match.group(1).strip()
-    return GraphResponse(target_graph=target_graph, generated_code=generated_code)
+        logger.error(f"Graph generation error for {target_graph}: {e}")
+        return GraphResponse(
+            target_graph=target_graph, 
+            generated_code=f"Generation Error: {str(e)}"
+        )
 
 
 

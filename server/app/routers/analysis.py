@@ -92,21 +92,37 @@ async def get_all_graphs(payload: GraphAllRequest):
     Predefined target graphs are 'Entity Relationship Diagram' and 'Requirement Diagram'.
     Returns an array of GraphResponse objects.
     """
+    # Attempt to retrieve the file content based on the requirement
+    file_content = None
+    try:
+        # You might need to implement a method to retrieve file content
+        # This is a placeholder - adjust according to your actual file retrieval mechanism
+        file_content = await retrieve_file_content(payload.requirement)
+    except Exception as e:
+        logger.warning(f"Could not retrieve file content: {e}")
+
     target_graphs = [
         "Entity Relationship Diagram",
         "Requirement Diagram"
-        # Add more graph types here if needed
     ]
+    
     tasks = [
-        generate_graph_from_requirement(payload.requirement, tg)
+        generate_graph_from_requirement(payload.requirement, tg, file_content)
         for tg in target_graphs
     ]
+    
     try:
         results = await asyncio.gather(*tasks)
         return results
     except Exception as e:
-        # Log the error appropriately here
+        logger.error(f"Error generating graphs: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error generating graphs: {str(e)}"
         )
+
+# You'll need to implement this function based on your file retrieval logic
+async def retrieve_file_content(requirement):
+    # This is a placeholder. Implement actual file content retrieval
+    # You might need to pass additional context or use a database/file system lookup
+    return requirement  # Temporary fallback

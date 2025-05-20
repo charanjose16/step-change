@@ -10,12 +10,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@lightenna/react-mermaid-diagram": "^1.0.17",
     "axios": "^1.9.0",
     "jspdf": "^3.0.1",
     "jspdf-autotable": "^5.0.2",
     "jwt-decode": "^4.0.0",
     "lucide-react": "^0.503.0",
+    "mermaid": "^11.6.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",

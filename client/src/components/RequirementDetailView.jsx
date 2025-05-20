@@ -14,10 +14,56 @@ export default function RequirementDetailView({
 }) {
     const hasGraphs = graphResponses.length > 0;
     const selectedGraphData = hasGraphs ? graphResponses[selectedGraphIndex] : null;
-    const chartCode = selectedGraphData?.generated_code;
+    const chartCode = selectedGraphData?.generated_code || "";
 
     // SVG for custom dropdown arrow (updated to teal color)
     const customArrow = `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%234b9797' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`;
+
+    // Improved error handling
+    const renderGraphContent = () => {
+        if (isLoadingGraph) {
+            return (
+                <div className="flex items-center justify-center h-full">
+                    <Loader2 className="h-8 w-8 animate-spin text-teal-600" />
+                </div>
+            );
+        }
+
+        if (graphError) {
+            return (
+                <div className="flex flex-col items-center justify-center text-red-400 text-center p-4">
+                    <AlertTriangle className="h-8 w-8 mb-2" />
+                    <span className="text-sm">{graphError}</span>
+                </div>
+            );
+        }
+
+        if (!hasGraphs || !chartCode) {
+            return (
+                <div className="flex items-center justify-center h-full text-teal-600 p-4 text-center">
+                    <AlertTriangle className="w-5 h-5 mr-2 flex-shrink-0" />
+                    No graph data available for this requirement.
+                </div>
+            );
+        }
+
+        // Improved error detection for generated code
+        const errorKeywords = ['error:', 'generation error', 'invalid', 'unsupported'];
+        const hasErrorMessage = errorKeywords.some(keyword => 
+            chartCode.toLowerCase().includes(keyword)
+        );
+
+        if (hasErrorMessage) {
+            return (
+                <div className="flex flex-col items-center justify-center text-red-400 text-center p-4">
+                    <AlertTriangle className="h-8 w-8 mb-2" />
+                    <span className="text-sm">{chartCode}</span>
+                </div>
+            );
+        }
+
+        return <MermaidGraph chart={chartCode} />;
+    };
 
     return (
         <div className="flex flex-col">
@@ -103,27 +149,7 @@ export default function RequirementDetailView({
 
                     {/* Graph Display Area */}
                     <div className="bg-teal-50 p-2 rounded-lg border border-teal-200 min-h-[300px] flex items-center justify-center relative shadow-lg">
-                        {isLoadingGraph ? (
-                            <div className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-75 z-10">
-                                <Loader2 className="h-8 w-8 animate-spin text-teal-600" />
-                            </div>
-                        ) : graphError && !hasGraphs ? (
-                            <div className="flex flex-col items-center justify-center text-red-400 text-center p-4">
-                                <AlertTriangle className="h-8 w-8 mb-2" />
-                                <span className="text-sm">{graphError}</span>
-                            </div>
-                        ) : hasGraphs && chartCode ? (
-                            <MermaidGraph chart={chartCode} />
-                        ) : hasGraphs && !chartCode ? (
-                            <div className="flex items-center justify-center h-full text-teal-600 p-4 text-center">
-                                <AlertTriangle className="w-5 h-5 mr-2 flex-shrink-0" />
-                                Selected graph data is empty or invalid.
-                            </div>
-                        ) : (
-                            <div className="flex items-center justify-center h-full text-teal-600 p-4 text-center">
-                                No graphs available for this file's requirements.
-                            </div>
-                        )}
+                        {renderGraphContent()}
                     </div>
                 </div>
             </div>
