@@ -133,102 +133,70 @@ async def generate_graph_from_requirement(requirement: str, target_graph: str, f
 
 
 
-async def generate_requirements_for_file_whole(
-    file_path: str,
-    base_dir: str,
-    language: str
-) -> FileRequirements:
-    logger.info(f"fast requirements: processing file {file_path}")
-    req_text = ""
+async def generate_requirements_for_file_whole(file_path, base_dir, language):
+    """
+    Generate comprehensive business requirements for a file with a structured format.
+    """
     try:
-        async with aiofiles.open(file_path, 'r', encoding='utf-8') as f:
-            content = await f.read()
+        # Read file content
+        async with aiofiles.open(file_path, mode='r', encoding='utf-8') as file:
+            content = await file.read()
 
-        token_count = count_tokens(content)
+        # Determine file type and adjust prompt accordingly
+        prompt = f"""
+        Act as a senior business analyst reviewing a {language} source file. 
+        Generate a comprehensive business requirements document with the following structured sections:
 
-        # Check token count BEFORE making the API call
-        if token_count > MAX_SAFE_TOKENS:
-            num_chunks = math.ceil(token_count / MAX_SAFE_TOKENS)
-            logger.info(
-                f"File {file_path} exceeds safe token limit ({MAX_SAFE_TOKENS}): {token_count} tokens. Splitting into {num_chunks} chunks."
-            )
-            # Ensure chunk size is at least 1
-            chunk_size = max(1, len(content) // num_chunks)
-            req_text_parts = []
-            tasks = []
+        1. Project Overview
+        - Provide a high-level description of the file's purpose and its role in the broader system
+        - Explain the strategic importance of this component
 
-            for i in range(num_chunks):
-                chunk_start = i * chunk_size
-                # Ensure the last chunk takes the remainder
-                chunk_end = (i + 1) * chunk_size if i < num_chunks - 1 else len(content)
-                chunk = content[chunk_start:chunk_end]
+        2. Objective
+        - Clearly state the primary business goal or problem this file/component addresses
+        - Describe the key business value it delivers
 
-                prompt_chunk = (
-                    f"Act as a meticulous product analyst and extract *all* functional requirements, rules, and logic from part {i+1}/{num_chunks} of this {language} source file. "
-                    "Pay close attention to even small details, conditions, constraints, and specific behaviors implemented in the code. "
-                    "Describe the key functionalities, user benefits, system interactions, data flows, and any implemented business rules comprehensively. "
-                    "Present the findings as clear, cohesive paragraphs. Do not omit any details, no matter how minor they seem. "
-                    "Return only the requirements text.\n\n"
-                    "```" + chunk + "```"
-                )
-                # Define the task for the LLM call within the semaphore context
-                async def chunk_task(p):
-                     async with llm_semaphore:
-                         return await asyncio.to_thread(llm_config._llm.complete, p)
+        3. Use Case
+        - Outline the specific business scenarios where this component is critical
+        - Describe how it supports business processes or user interactions
 
-                tasks.append(chunk_task(prompt_chunk))
+        4. Key Functionalities
+        - List the core business capabilities implemented in this component
+        - Focus on what the functionality achieves from a business perspective, not technical implementation
 
-            # Gather results from all chunk tasks
-            chunk_results = await asyncio.gather(*tasks, return_exceptions=True)
+        5. Workflow Summary
+        - Describe the end-to-end business process or workflow this component supports
+        - Explain how it integrates with other system components
 
-            for i, result_chunk in enumerate(chunk_results):
-                 if isinstance(result_chunk, Exception):
-                      logger.error(f"Error processing chunk {i+1}/{num_chunks} for {file_path}: {result_chunk}")
-                      req_text_parts.append(f"[Error processing chunk {i+1}]") # Add error placeholder
-                 elif hasattr(result_chunk, "text"):
-                      req_text_parts.append(result_chunk.text.strip())
-                 else:
-                      logger.warning(f"Unexpected result type for chunk {i+1}/{num_chunks} of {file_path}: {type(result_chunk)}")
-                      req_text_parts.append("[Unexpected result format]")
+        Constraints:
+        - Use clear, concise business language
+        - Avoid technical jargon and implementation details
+        - Focus on business value, user benefits, and strategic objectives
 
+        Analyze the following file content and generate requirements accordingly:
+        ```{language}
+        {content}
+        ```
+        """
 
-            req_text = "\n\n---\n\n".join(req_text_parts) # Join parts with a separator
+        # Generate requirements using LLM
+        async with llm_semaphore:
+            result = await asyncio.to_thread(llm_config._llm.complete, prompt)
+        
+        req_text = result.text.strip()
 
-        else:
-            # Token count is within limits, process the whole file
-            logger.info(f"File {file_path} is within safe token limit ({token_count} tokens). Processing as a whole.")
-            prompt = (
-                f"Act as a meticulous product analyst and extract *all* functional requirements, rules, and logic from this {language} source file. "
-                "Pay close attention to even small details, conditions, constraints, and specific behaviors implemented in the code. "
-                "For each identified requirement or rule, specify:\n"
-                "  1. The feature, capability, or rule name/description.\n"
-                "  2. Its business purpose, user benefit, or system constraint it enforces.\n"
-                "  3. The key user/system interactions, data flows, or specific logic involved.\n"
-                "Write the analysis as clear, comprehensive, and cohesive paragraphs. Ensure no functionality, rule, or logic, however minor, is missed. "
-                "Do not include code references or implementation details unless essential for describing the requirement. "
-                "Return only the requirements text.\n\n"
-                "```" + content + "```"
-            )
-            try:
-                async with llm_semaphore:
-                    result = await asyncio.to_thread(llm_config._llm.complete, prompt)
-                req_text = result.text.strip()
-            except Exception as e:
-                 logger.error(f"LLM error processing whole file {file_path} (within token limit): {e}", exc_info=True)
-                 req_text = f"[Error processing file: {e}]" # Indicate error in output
+        return FileRequirements(
+            relative_path=os.path.relpath(file_path, base_dir),
+            file_name=os.path.basename(file_path),
+            requirements=req_text
+        )
 
-    except FileNotFoundError:
-        logger.error(f"File not found during requirements generation: {file_path}")
-        req_text = "[Error: File not found]"
     except Exception as e:
-        logger.error(f"General error processing requirements for {file_path}: {e}", exc_info=True)
-        req_text = f"[General Error: {e}]" # Indicate general error
-
-    return FileRequirements(
-        relative_path=os.path.relpath(file_path, base_dir),
-        file_name=os.path.basename(file_path),
-        requirements=req_text
-    )
+        logger.error(f"Error generating requirements for {file_path}: {e}", exc_info=True)
+        return FileRequirements(
+            relative_path=os.path.relpath(file_path, base_dir),
+            file_name=os.path.basename(file_path),
+            requirements=f"Error generating requirements: {str(e)}"
+        )
 
 
 async def generate_requirements_for_files_whole(
