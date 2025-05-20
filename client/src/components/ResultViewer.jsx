@@ -1,57 +1,59 @@
 import React, { useState, useEffect } from "react";
-import Modal from "./Modal";
+import { useLocation, useNavigate } from "react-router-dom";
 import axios from "../api/axiosConfig";
 import FullScreenGraph from "./FullScreenGraph";
-import RequirementListView from "./RequirementListView";
 import RequirementDetailView from "./RequirementDetailView";
-import { Loader2, AlertTriangle } from "lucide-react";
+import { Loader2, AlertTriangle, ArrowLeft } from "lucide-react";
+import FileHierarchy from './FileHierarchy';
 
-export default function ResultViewer({ isOpen, onClose }) {
+export default function ResultViewer() {
     const [loadedRequirements, setLoadedRequirements] = useState(null);
     const [loadError, setLoadError] = useState("");
-    const [searchTerm, setSearchTerm] = useState("");
-    const [currentPage, setCurrentPage] = useState(1);
-    const requirementsPerPage = 4;
     const [selectedRequirement, setSelectedRequirement] = useState(null);
-    const [detailGraphIndex, setDetailGraphIndex] = useState(0);
     const [graphResponses, setGraphResponses] = useState([]);
     const [loadingGraph, setLoadingGraph] = useState(false);
     const [graphError, setGraphError] = useState("");
     const [isFullScreen, setIsFullScreen] = useState(false);
+    const [detailGraphIndex, setDetailGraphIndex] = useState(0);
+    const location = useLocation();
+    const navigate = useNavigate();
+    const result = location.state?.result;
 
     // --- Effects ---
     useEffect(() => {
-        if (isOpen) {
-            setLoadError("");
-            setLoadedRequirements(null);
-            setSelectedRequirement(null);
-            setSearchTerm("");
-            setCurrentPage(1);
-            setIsFullScreen(false);
-            setGraphResponses([]);
-            setGraphError("");
+        if (!result) {
+            setLoadError("No analysis results available. Please analyze a codebase first.");
+            return;
+        }
 
-            const storedResult = localStorage.getItem("requirementsOutput");
-            if (storedResult) {
-                try {
-                    const parsedResult = JSON.parse(storedResult);
-                    if (parsedResult && Array.isArray(parsedResult.requirements)) {
-                        setLoadedRequirements({ files: parsedResult.requirements });
-                    } else {
-                        console.error("Stored data format invalid:", parsedResult);
-                        setLoadError("Failed to load results: Invalid data format.");
-                        localStorage.removeItem("requirementsOutput");
-                    }
-                } catch (e) {
-                    console.error("Failed to parse stored results:", e);
-                    setLoadError("Failed to load results: Could not parse data.");
+        setLoadError("");
+        setLoadedRequirements(null);
+        setSelectedRequirement(null);
+        setGraphResponses([]);
+        setGraphError("");
+        setIsFullScreen(false);
+        setDetailGraphIndex(0);
+
+        const storedResult = localStorage.getItem("requirementsOutput");
+        if (storedResult) {
+            try {
+                const parsedResult = JSON.parse(storedResult);
+                if (parsedResult && Array.isArray(parsedResult.requirements)) {
+                    setLoadedRequirements({ files: parsedResult.requirements });
+                } else {
+                    console.error("Stored data format invalid:", parsedResult);
+                    setLoadError("Failed to load results: Invalid data format.");
                     localStorage.removeItem("requirementsOutput");
                 }
-            } else {
-                setLoadError("No analysis results found in storage.");
+            } catch (e) {
+                console.error("Failed to parse stored results:", e);
+                setLoadError("Failed to load results: Could not parse data.");
+                localStorage.removeItem("requirementsOutput");
             }
+        } else {
+            setLoadError("No analysis results found in storage.");
         }
-    }, [isOpen]);
+    }, [result]);
 
     useEffect(() => {
         const fetchGraphs = async () => {
@@ -99,82 +101,54 @@ export default function ResultViewer({ isOpen, onClose }) {
         }
     }, [selectedRequirement]);
 
-    // --- Data Processing ---
-    const reqFiles = loadedRequirements?.files ?? [];
-    const filteredRequirements = reqFiles.filter((file) => {
-        const term = searchTerm.toLowerCase();
-        const fileNameMatch = file.file_name?.toLowerCase().includes(term);
-        return !!fileNameMatch;
-    });
-
-    const totalFilteredRequirements = filteredRequirements.length;
-    const totalPages = Math.max(1, Math.ceil(totalFilteredRequirements / requirementsPerPage));
-    const startIdx = (currentPage - 1) * requirementsPerPage;
-    const pagedRequirements = filteredRequirements.slice(
-        startIdx,
-        startIdx + requirementsPerPage
-    );
-
-    useEffect(() => {
-        if (currentPage > totalPages) {
-            setCurrentPage(totalPages);
-        }
-        if (currentPage > 1 && totalFilteredRequirements === 0) {
-            setCurrentPage(1);
-        }
-    }, [totalPages, currentPage, totalFilteredRequirements]);
-
     // --- Event Handlers ---
-    const handleSearchChange = (term) => {
-        setSearchTerm(term);
-        setCurrentPage(1);
-    };
-
-    const handlePageChange = (page) => {
-        setCurrentPage(page);
-    };
-
-    const handleSelectRequirement = (req) => {
-        setSelectedRequirement(req);
-    };
+    // const handleSelectRequirement = (requirement) => {
+    //     setSelectedRequirement(requirement);
+    // };
 
     const handleGoBack = () => {
-        setSelectedRequirement(null);
+        if (selectedRequirement) {
+            setSelectedRequirement(null);
+        } else {
+            navigate('/');
+        }
     };
 
-    const handleGraphIndexChange = (index) => {
-        setDetailGraphIndex(index);
+    const handleGraphIndexChange = (newIndex) => {
+        setDetailGraphIndex(newIndex);
     };
 
     const handleFullscreen = () => {
         setIsFullScreen(true);
     };
 
-    // --- Main Modal Content Determination ---
-    let modalContent;
+    const handleViewFile = (file) => {
+        const requirement = result?.requirements.find(
+            req => req.file_name === file.name || req.relative_path === file.path
+        );
+        if (requirement) {
+            setSelectedRequirement(requirement);
+        }
+    };
+
+    // --- Main Content Determination ---
+    let content = null;
     if (loadError) {
-        modalContent = (
-            <div className="flex flex-col items-center justify-center py-12 text-center text-red-400">
-                <AlertTriangle className="h-10 w-10 mb-3" />
-                <h3 className="text-lg font-semibold mb-2">Error Loading Results</h3>
-                <p className="text-sm">{loadError}</p>
-                <button
-                    onClick={onClose}
-                    className="mt-4 px-4 py-2 bg-teal-600 hover:bg-teal-500 text-white rounded-lg shadow-lg hover:shadow-teal-500/30 text-sm"
-                >
-                    Close
-                </button>
+        content = (
+            <div className="flex items-center justify-center py-12 text-red-600">
+                <AlertTriangle className="h-8 w-8 mr-3" />
+                {loadError}
             </div>
         );
     } else if (!loadedRequirements) {
-        modalContent = (
+        content = (
             <div className="flex items-center justify-center py-12 text-teal-600">
                 <Loader2 className="h-8 w-8 animate-spin mr-3" />
                 Loading results...
             </div>
         );
     } else if (selectedRequirement) {
-        modalContent = (
+        content = (
             <RequirementDetailView
                 requirement={selectedRequirement}
                 graphResponses={graphResponses}
@@ -187,19 +161,34 @@ export default function ResultViewer({ isOpen, onClose }) {
             />
         );
     } else {
-        modalContent = (
-            <RequirementListView
-                requirements={pagedRequirements}
-                totalFilteredRequirements={totalFilteredRequirements}
-                searchTerm={searchTerm}
-                onSearchChange={handleSearchChange}
-                currentPage={currentPage}
-                totalPages={totalPages}
-                onPageChange={handlePageChange}
-                onSelectRequirement={handleSelectRequirement}
-                requirementsPerPage={requirementsPerPage}
-                startIdx={startIdx}
-            />
+        content = (
+            <div className="flex flex-col items-center w-full min-h-screen p-8 bg-gradient-to-br from-teal-50 to-teal-100">
+                <div className="flex items-center justify-between w-full max-w-5xl mb-6">
+                    <h2 className="text-3xl font-bold text-teal-800 animate-fadeIn">
+                        Project Structure
+                    </h2>
+                    <button
+                        onClick={handleGoBack}
+                        className="flex items-center px-4 py-2 bg-teal-100 hover:bg-teal-200 text-teal-800 rounded-lg transition-all duration-200 text-sm font-semibold shadow-lg hover:scale-105"
+                        aria-label="Back to dashboard"
+                    >
+                        <ArrowLeft className="w-4 h-4 mr-1" />
+                        Back to Dashboard
+                    </button>
+                </div>
+                <div className="w-full max-w-5xl">
+                    {result?.file_hierarchy ? (
+                        <FileHierarchy 
+                            fileHierarchy={result.file_hierarchy}
+                            onViewFile={handleViewFile}
+                        />
+                    ) : (
+                        <div className="text-teal-600 text-center py-12 text-lg">
+                            No project structure available. Please analyze a valid codebase.
+                        </div>
+                    )}
+                </div>
+            </div>
         );
     }
 
@@ -210,24 +199,8 @@ export default function ResultViewer({ isOpen, onClose }) {
 
     // --- Final Render ---
     return (
-        <>
-            {/* Main Modal */}
-            <Modal
-                isOpen={isOpen && !isFullScreen}
-                onClose={onClose}
-                className="bg-white rounded-xl shadow-lg max-w-4xl w-full"
-            >
-                <div className="pt-4 pb-6 px-6 flex flex-col h-full max-h-[85vh]">
-                    <h2 className="text-xl font-bold text-teal-800 mb-5 border-b border-teal-200 pb-3 flex-shrink-0">
-                        File Requirements Analysis
-                    </h2>
-                    <div className="flex-1 overflow-y-auto pr-2">
-                        {modalContent}
-                    </div>
-                </div>
-            </Modal>
-
-            {/* Fullscreen Graph Viewer */}
+        <div className="min-h-screen flex flex-col bg-gray-50">
+            {content}
             {canShowFullscreen && (
                 <FullScreenGraph
                     chart={selectedGraphForFullscreen}
@@ -235,6 +208,6 @@ export default function ResultViewer({ isOpen, onClose }) {
                     className="bg-teal-700 text-white shadow-lg"
                 />
             )}
-        </>
+        </div>
     );
 }

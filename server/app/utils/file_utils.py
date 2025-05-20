@@ -1,7 +1,7 @@
 import asyncio
 import shutil
 import os
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Any
 import re
 
 async def cleanup_temp_dir(temp_dir: str):
@@ -179,3 +179,65 @@ def get_file_language(file_path: str) -> str:
     
     # Return language or empty string
     return LANGUAGE_MAP.get(ext.lower(), '')
+
+def get_hierarchical_files(directory: str) -> Dict[str, Any]:
+    """
+    Recursively build a hierarchical file structure.
+    
+    Args:
+        directory (str): Base directory path
+    
+    Returns:
+        Dict representing the hierarchical file structure
+    """
+    def build_hierarchy(path):
+        hierarchy = {
+            'name': os.path.basename(path),
+            'path': path,
+            'type': 'directory' if os.path.isdir(path) else 'file',
+            'children': []
+        }
+        
+        # If it's a directory, recursively add its contents
+        if os.path.isdir(path):
+            try:
+                for item in sorted(os.listdir(path)):
+                    full_path = os.path.join(path, item)
+                    
+                    # Skip ignored files and directories
+                    if should_ignore(full_path):
+                        continue
+                    
+                    child_item = build_hierarchy(full_path)
+                    hierarchy['children'].append(child_item)
+            except PermissionError:
+                # Handle permission issues gracefully
+                pass
+        
+        return hierarchy
+
+    # Reuse the existing should_ignore logic from get_code_files
+    def should_ignore(path):
+        IGNORE_PATTERNS = [
+            # ... (keep the existing ignore patterns from get_code_files)
+        ]
+        
+        # Compile regex patterns for efficiency
+        ignore_patterns = [re.compile(pattern) for pattern in IGNORE_PATTERNS]
+        
+        # Check against ignore patterns
+        for pattern in ignore_patterns:
+            if pattern.search(path):
+                return True
+        
+        # Additional custom checks
+        filename = os.path.basename(path)
+        
+        # Ignore files starting with dot
+        if filename.startswith('.'):
+            return True
+        
+        return False
+
+    # Build and return the hierarchical structure
+    return build_hierarchy(directory)

@@ -1,19 +1,20 @@
-import React, { useState, useEffect, Suspense, lazy } from "react";
+import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import axios from "../api/axiosConfig";
 import Navbar from "../components/Navbar";
 import { XCircle, CheckCircle, AlertCircle, Download, RotateCcw, Github, FolderOpen, Code, FileText } from "lucide-react";
 import { isValidGithubUrl, isValidFilePath } from "../utils/validation";
 import { jsPDF } from "jspdf";
-
-const ResultViewer = lazy(() => import("../components/ResultViewer"));
+import FileHierarchy from '../components/FileHierarchy';
 
 export default function Dashboard() {
     const [link, setLink] = useState("");
     const [loading, setLoading] = useState(false);
     const [result, setResult] = useState(null);
     const [error, setError] = useState(null);
-    const [showResultsViewer, setShowResultsViewer] = useState(false);
     const [analysisComplete, setAnalysisComplete] = useState(false);
+    const [, setFileHierarchy] = useState(null);
+    const navigate = useNavigate();
 
     useEffect(() => {
         const storedResult = localStorage.getItem("requirementsOutput");
@@ -22,7 +23,6 @@ export default function Dashboard() {
                 const parsedResult = JSON.parse(storedResult);
                 setResult(parsedResult);
                 setAnalysisComplete(true);
-                setShowResultsViewer(true);
             } catch (e) {
                 console.error("Failed to parse stored results:", e);
                 localStorage.removeItem("requirementsOutput");
@@ -34,7 +34,6 @@ export default function Dashboard() {
         e.preventDefault();
         setError(null);
         setResult(null);
-        setShowResultsViewer(false);
         setAnalysisComplete(false);
         localStorage.removeItem("requirementsOutput");
 
@@ -51,8 +50,8 @@ export default function Dashboard() {
             setResult(res.data);
             localStorage.setItem("requirementsOutput", JSON.stringify(res.data));
             setAnalysisComplete(true);
-            setShowResultsViewer(true);
             setError(null);
+            setFileHierarchy(res.data.file_hierarchy);
         } catch (err) {
             console.error(err);
             const errMsg =
@@ -72,7 +71,6 @@ export default function Dashboard() {
         setResult(null);
         setAnalysisComplete(false);
         setError(null);
-        setShowResultsViewer(false);
         localStorage.removeItem("requirementsOutput");
         console.log("Analysis results cleared.");
     };
@@ -299,7 +297,6 @@ export default function Dashboard() {
                                         <div>
                                             <div className="font-semibold text-teal-800 text-xs">Files Analyzed</div>
                                             <div className="text-sm font-semibold text-teal-600">{result.requirements?.length || 0} <span className="text-sm mr-2">Code files processed</span></div>
-                                            
                                         </div>
                                     </div>
                                 </div>
@@ -314,18 +311,13 @@ export default function Dashboard() {
                             </div>
 
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                {/* First Row: Description */}
                                 <p className="text-teal-600 text-sm md:col-span-3 mx-auto max-w-prose leading-relaxed text-center">
                                     Explore the business logic extracted from each file for a comprehensive understanding of your codebase.
                                 </p>
 
-                                {/* Second Row: Summary and Button */}
-                                {/* <div className="md:col-span-2 grid md:grid-cols-2 gap-4 items-center ml-60"> */}
-                                    
-
-                                <div className="flex justify-center md:col-span-3 ">
+                                <div className="flex justify-center md:col-span-3">
                                     <button
-                                        onClick={() => setShowResultsViewer(true)}
+                                        onClick={() => navigate('/results', { state: { result } })}
                                         className="flex items-center justify-center px-4 py-2 bg-teal-600 hover:bg-teal-500 text-white rounded-lg transition-all duration-200 shadow-lg hover:shadow-teal-500/40 hover:scale-105 text-sm font-semibold"
                                         aria-label="View detailed analysis results"
                                     >
@@ -333,7 +325,6 @@ export default function Dashboard() {
                                         View Detailed Results
                                     </button>
                                 </div>
-                                {/* </div> */}
                             </div>
                         </div>
 
@@ -360,25 +351,6 @@ export default function Dashboard() {
                     </div>
                 )}
             </div>
-
-            {/* Result Viewer Modal */}
-            {showResultsViewer && result && (
-                <Suspense
-                    fallback={
-                        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
-                            <div className="bg-white p-6 rounded-2xl shadow-lg flex flex-col items-center">
-                                <div className="animate-spin w-10 h-10 border-4 border-teal-600 border-t-transparent rounded-full mb-3"></div>
-                                <p className="text-teal-800 font-semibold text-sm">Loading Results...</p>
-                            </div>
-                        </div>
-                    }
-                >
-                    <ResultViewer
-                        isOpen={showResultsViewer}
-                        onClose={() => setShowResultsViewer(false)}
-                    />
-                </Suspense>
-            )}
         </div>
     );
 }

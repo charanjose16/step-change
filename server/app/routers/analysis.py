@@ -6,7 +6,7 @@ import tempfile
 from typing import List
 from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 from pydantic import BaseModel, validator
-from app.utils.file_utils import cleanup_temp_dir
+from app.utils.file_utils import cleanup_temp_dir, get_hierarchical_files
 from app.utils.git_utils import clone_repository
 from app.services.analysis_service import (
     generate_requirements_for_files_whole,
@@ -72,17 +72,19 @@ async def analyze_repo(data: AnalyzeRequest, background_tasks: BackgroundTasks):
             detail=f"Error generating requirements: {str(e)}"
         )
 
-    requirements_output = [
-        {"file_name": fr.file_name, "relative_path": fr.relative_path, "requirements": fr.requirements}
-        for fr in files_requirements.files
-    ]
+    # Get hierarchical file structure
+    file_hierarchy = get_hierarchical_files(directory)
 
-    # If it's a temporary directory, schedule cleanup after sending the response.
-    if is_temp:
-        background_tasks.add_task(cleanup_temp_dir, directory)
-
-    # Return the base directory path along with requirements
-    return {"success": True, "directory": directory, "requirements": requirements_output}
+    # Return the base directory path, requirements, and file hierarchy
+    return {
+        "success": True, 
+        "directory": directory, 
+        "requirements": [
+            {"file_name": fr.file_name, "relative_path": fr.relative_path, "requirements": fr.requirements}
+            for fr in files_requirements.files
+        ],
+        "file_hierarchy": file_hierarchy
+    }
 
 
 @router.post("/graphs", response_model=List[GraphResponse], summary="Generate graphs from file requirement")

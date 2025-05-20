@@ -1,158 +1,108 @@
 import React from 'react';
+import { ArrowLeft, Maximize2 } from 'lucide-react';
 import MermaidGraph from './MermaidGraph';
-import { ArrowLeft, Maximize, Loader2, AlertTriangle, ChevronDown } from 'lucide-react';
 
 export default function RequirementDetailView({
-    requirement,
-    graphResponses,
-    isLoadingGraph,
-    graphError,
-    selectedGraphIndex,
-    onGraphIndexChange,
-    onGoBack,
-    onFullscreen,
+  requirement,
+  graphResponses,
+  isLoadingGraph,
+  graphError,
+  selectedGraphIndex,
+  onGraphIndexChange,
+  onGoBack,
+  onFullscreen
 }) {
-    const hasGraphs = graphResponses.length > 0;
-    const selectedGraphData = hasGraphs ? graphResponses[selectedGraphIndex] : null;
-    const chartCode = selectedGraphData?.generated_code || "";
-
-    // SVG for custom dropdown arrow (updated to teal color)
-    const customArrow = `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%234b9797' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`;
-
-    // Improved error handling
-    const renderGraphContent = () => {
-        if (isLoadingGraph) {
-            return (
-                <div className="flex items-center justify-center h-full">
-                    <Loader2 className="h-8 w-8 animate-spin text-teal-600" />
-                </div>
-            );
-        }
-
-        if (graphError) {
-            return (
-                <div className="flex flex-col items-center justify-center text-red-400 text-center p-4">
-                    <AlertTriangle className="h-8 w-8 mb-2" />
-                    <span className="text-sm">{graphError}</span>
-                </div>
-            );
-        }
-
-        if (!hasGraphs || !chartCode) {
-            return (
-                <div className="flex items-center justify-center h-full text-teal-600 p-4 text-center">
-                    <AlertTriangle className="w-5 h-5 mr-2 flex-shrink-0" />
-                    No graph data available for this requirement.
-                </div>
-            );
-        }
-
-        // Improved error detection for generated code
-        const errorKeywords = ['error:', 'generation error', 'invalid', 'unsupported'];
-        const hasErrorMessage = errorKeywords.some(keyword => 
-            chartCode.toLowerCase().includes(keyword)
-        );
-
-        if (hasErrorMessage) {
-            return (
-                <div className="flex flex-col items-center justify-center text-red-400 text-center p-4">
-                    <AlertTriangle className="h-8 w-8 mb-2" />
-                    <span className="text-sm">{chartCode}</span>
-                </div>
-            );
-        }
-
-        return <MermaidGraph chart={chartCode} />;
-    };
-
-    return (
-        <div className="flex flex-col">
-            {/* Header: Back Button & Title */}
-            <div className="flex items-center mb-4 flex-shrink-0">
-                <button
-                    onClick={onGoBack}
-                    className="p-2 rounded-full text-teal-600 hover:bg-teal-100 hover:text-teal-800 transition-colors mr-2 shadow-lg"
-                    title="Back to List"
-                >
-                    <ArrowLeft className="h-5 w-5" />
-                </button>
-                <h3
-                    className="text-lg font-semibold text-teal-800 truncate"
-                    title={requirement?.file_name || "File Details"}
-                >
-                    {requirement?.file_name || "File Details"}
-                </h3>
-            </div>
-
-            {/* Content Area: Requirements and Graph */}
-            <div className="border border-teal-200 rounded-lg bg-white overflow-hidden shadow-lg">
-                {/* Requirement Text */}
-                <div className="p-4 border-b border-teal-200 bg-teal-50">
-                    <p
-                        className="text-xs text-teal-600 mb-2 truncate"
-                        title={requirement?.relative_path || "No path available"}
-                    >
-                        Path: {requirement?.relative_path || "N/A"}
-                    </p>
-                    <p className="text-sm text-teal-800 whitespace-pre-wrap break-words">
-                        {requirement?.requirements || "No requirements description."}
-                    </p>
-                </div>
-
-                {/* Graph Section */}
-                <div className="p-4">
-                    {/* Graph Selector & Fullscreen Button */}
-                    <div className="flex justify-between items-center mb-3 gap-4">
-                        <label
-                            htmlFor="graph-select"
-                            className="text-sm font-medium text-teal-700 flex-shrink-0"
-                        >
-                            Select Graph:
-                        </label>
-                        {hasGraphs ? (
-                            <select
-                                id="graph-select"
-                                value={selectedGraphIndex}
-                                onChange={(e) => onGraphIndexChange(Number(e.target.value))}
-                                className="block w-full pl-3 pr-8 py-2 border border-teal-300/40 rounded-lg shadow-lg bg-white text-teal-800 focus:outline-none focus:ring-2 focus:ring-teal-300 sm:text-sm appearance-none"
-                                style={{
-                                    backgroundImage: customArrow,
-                                    backgroundPosition: 'right 0.5rem center',
-                                    backgroundRepeat: 'no-repeat',
-                                    backgroundSize: '1.25em 1.25em',
-                                }}
-                                disabled={graphResponses.length <= 1}
-                            >
-                                {graphResponses.map((graph, i) => (
-                                    <option key={i} value={i}>
-                                        {graph.target_graph || `Graph ${i + 1}`}
-                                    </option>
-                                ))}
-                            </select>
-                        ) : (
-                            <span className="text-sm text-teal-600 italic w-full text-right">
-                                {isLoadingGraph
-                                    ? "Loading..."
-                                    : graphError || "No graphs available"}
-                            </span>
-                        )}
-                        {hasGraphs && chartCode && (
-                            <button
-                                onClick={onFullscreen}
-                                className="p-1.5 text-teal-500 hover:text-teal-600 hover:bg-teal-50 rounded flex-shrink-0 shadow-lg"
-                                title="Fullscreen Graph"
-                            >
-                                <Maximize className="h-5 w-5" />
-                            </button>
-                        )}
-                    </div>
-
-                    {/* Graph Display Area */}
-                    <div className="bg-teal-50 p-2 rounded-lg border border-teal-200 min-h-[300px] flex items-center justify-center relative shadow-lg">
-                        {renderGraphContent()}
-                    </div>
-                </div>
-            </div>
+  return (
+    <div className="flex flex-col w-full h-full p-6 overflow-y-auto">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center">
+          <button
+            onClick={onGoBack}
+            className="flex items-center px-3 py-1 bg-teal-100 hover:bg-teal-200 text-teal-800 rounded-lg transition-all duration-200 text-sm font-semibold shadow-lg"
+            aria-label="Go back to project structure"
+          >
+            <ArrowLeft className="w-4 h-4 mr-1" />
+            Back
+          </button>
+          <h2 className="text-xl font-bold text-teal-800 ml-4">
+            {requirement.file_name || 'Unknown File'}
+          </h2>
         </div>
-    );
+      </div>
+
+      <div className="mb-6">
+        <h3 className="text-lg font-semibold text-teal-700 mb-2">File Path</h3>
+        <p className="text-sm text-teal-600">
+          {requirement.relative_path || 'No path available'}
+        </p>
+      </div>
+
+      <div className="mb-6">
+        <h3 className="text-lg font-semibold text-teal-700 mb-2">Requirements</h3>
+        <p className="text-sm text-teal-800 whitespace-pre-wrap">
+          {requirement.requirements || 'No requirements available'}
+        </p>
+      </div>
+
+      <div className="mb-6">
+        <h3 className="text-lg font-semibold text-teal-700 mb-2">Diagrams</h3>
+        {isLoadingGraph ? (
+          <div className="flex items-center justify-center py-4 text-teal-600">
+            <svg
+              className="animate-spin h-6 w-6 mr-2"
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+            >
+              <circle
+                className="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                strokeWidth="4"
+              ></circle>
+              <path
+                className="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+              ></path>
+            </svg>
+            Loading diagrams...
+          </div>
+        ) : graphError ? (
+          <div className="text-red-600 text-sm">{graphError}</div>
+        ) : graphResponses.length === 0 ? (
+          <div className="text-teal-600 text-sm">No diagrams available</div>
+        ) : (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <select
+                value={selectedGraphIndex}
+                onChange={(e) => onGraphIndexChange(Number(e.target.value))}
+                className="px-3 py-1 border border-teal-300 rounded-lg text-sm text-teal-800 focus:outline-none focus:ring-2 focus:ring-teal-300"
+              >
+                {graphResponses.map((graph, index) => (
+                  <option key={index} value={index}>
+                    {graph.target_graph || `Diagram ${index + 1}`}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={onFullscreen}
+                className="flex items-center px-3 py-1 bg-teal-600 hover:bg-teal-500 text-white rounded-lg text-sm shadow-lg"
+                aria-label="View diagram in fullscreen"
+              >
+                <Maximize2 className="w-4 h-4 mr-1" />
+                Fullscreen
+              </button>
+            </div>
+            <div className="border rounded-lg p-4 bg-white shadow-lg overflow-x-auto">
+              <MermaidGraph chart={graphResponses[selectedGraphIndex]?.generated_code} />
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
