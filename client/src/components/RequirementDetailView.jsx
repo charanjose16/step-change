@@ -2,6 +2,18 @@ import React from 'react';
 import { ArrowLeft, Maximize2 } from 'lucide-react';
 import MermaidGraph from './MermaidGraph';
 
+const formatRequirementText = (text) => {
+    return text
+        .replace(/^(Overview|Objective|Use Case|Key Functionalities|Workflow Summary)$/gm, match => 
+            `<strong class="text-teal-700 text-xl block mt-6 mb-3">${match}</strong>`
+        )
+        .replace(/\*\*/g, '')
+        .replace(/\*/g, '')
+        .replace(/^#+\s*/gm, '')
+        .replace(/^-\s*/gm, '')
+        .trim();
+};
+
 export default function RequirementDetailView({
   requirement,
   graphResponses,
@@ -12,6 +24,8 @@ export default function RequirementDetailView({
   onGoBack,
   onFullscreen
 }) {
+  const formattedRequirements = formatRequirementText(requirement?.requirements || '');
+
   return (
     <div className="flex flex-col w-full h-full p-6 overflow-y-auto bg-gray-50">
       <div className="flex items-center justify-between mb-6">
@@ -39,9 +53,14 @@ export default function RequirementDetailView({
 
       <div className="mb-8 bg-white rounded-xl shadow-lg p-6">
         <h3 className="text-xl font-semibold text-teal-700 mb-3">Full Requirements</h3>
-        <p className="text-base text-teal-800 whitespace-pre-wrap">
-          {requirement?.requirements || 'No requirements available'}
-        </p>
+        <div 
+          className="prose max-w-full"
+          dangerouslySetInnerHTML={{
+            __html: formattedRequirements.split('\n\n').map(paragraph => 
+              `<p class="mb-4 text-gray-800 leading-relaxed">${paragraph.trim()}</p>`
+            ).join('')
+          }}
+        />
       </div>
 
       <div className="mb-8 bg-white rounded-xl shadow-lg p-6">
