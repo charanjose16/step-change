@@ -110,7 +110,7 @@ export default function ResultViewer() {
         if (selectedRequirement) {
             setSelectedRequirement(null);
         } else {
-            navigate('/');
+            navigate('/dashboard');
         }
     };
 

@@ -137,8 +137,9 @@ def get_code_files(directory: str) -> List[Tuple[str, str]]:
                     # Read first few lines to validate text file
                     f.read(1024)
                 
-                # If successful, add to code files
-                code_files.append((full_path, ""))
+                # If successful, add to code files with detected language
+                language = get_file_language(full_path)
+                code_files.append((full_path, language))
             
             except (UnicodeDecodeError, IOError):
                 # Skip binary or non-readable files
@@ -160,7 +161,9 @@ def get_file_language(file_path: str) -> str:
     LANGUAGE_MAP = {
         '.py': 'Python',
         '.js': 'JavaScript',
+        '.jsx': 'JavaScript',  # Treat JSX as JavaScript for requirements generation
         '.ts': 'TypeScript',
+        '.tsx': 'TypeScript',  # Treat TSX as TypeScript
         '.java': 'Java',
         '.scala': 'Scala',
         '.rb': 'Ruby',
@@ -177,8 +180,13 @@ def get_file_language(file_path: str) -> str:
     # Get file extension
     _, ext = os.path.splitext(file_path)
     
+    # Log the extension and detected language for debugging
+    detected_language = LANGUAGE_MAP.get(ext.lower(), '')
+    from app.utils import logger
+    logger.debug(f"File: {file_path}, Extension: {ext}, Detected Language: {detected_language}")
+    
     # Return language or empty string
-    return LANGUAGE_MAP.get(ext.lower(), '')
+    return detected_language
 
 def get_hierarchical_files(directory: str) -> Dict[str, Any]:
     """
