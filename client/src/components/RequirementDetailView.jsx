@@ -1,17 +1,58 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { ArrowLeft, Maximize2 } from 'lucide-react';
 import MermaidGraph from './MermaidGraph';
+import { useNavigate, useLocation } from 'react-router-dom';
 
-const formatRequirementText = (text) => {
-    return text
-        .replace(/^(Overview|Objective|Use Case|Key Functionalities|Workflow Summary)$/gm, match => 
-            `<strong class="text-teal-700 text-xl block mt-6 mb-3">${match}</strong>`
-        )
-        .replace(/\*\*/g, '')
-        .replace(/\*/g, '')
-        .replace(/^#+\s*/gm, '')
-        .replace(/^-\s*/gm, '')
-        .trim();
+const formatRequirementSummary = (text) => {
+  if (!text) return '';
+
+  // Split text into paragraphs
+  const paragraphs = text.split('\n\n');
+  let formatted = [];
+
+  for (const paragraph of paragraphs) {
+    const lines = paragraph.split('\n').filter(l => l.trim());
+    if (!lines.length) continue;
+
+    // Check if paragraph is a numbered list (starts with "1.", "2.", etc.)
+    const isNumberedList = lines[0].match(/^\d+\.\s+/);
+    if (isNumberedList) {
+      // Process as a list, preserving serial numbers
+      const listItems = lines
+        .filter(line => line.match(/^\d+\.\s+/))
+        .map(line => {
+          const match = line.match(/^(\d+\.\s+)(.*)$/);
+          const content = match ? match[2].trim() : line.trim();
+          const serial = match ? match[1].trim() : '';
+          return `<li class="mb-2 text-sm text-gray-800">${serial}${content}</li>`;
+        });
+      if (listItems.length) {
+        formatted.push(`<ul class="list-none pl-0 my-2">${listItems.join('')}</ul>`);
+        continue;
+      }
+    }
+
+    // Handle headers (Overview, Key Functionalities, etc.)
+    if (lines[0].match(/^(Overview|Objective|Use Case|Key Functionalities|Workflow Summary)$/)) {
+      const header = lines[0];
+      const content = lines.slice(1).join(' ').trim();
+      formatted.push(`<strong class="text-teal-700 text-xl block mt-6 mb-4">${header}</strong>`);
+      if (content) {
+        formatted.push(`<p class="mb-2 text-sm text-gray-800">${content}</p>`);
+      }
+    } else {
+      // Regular paragraph
+      const content = lines.join(' ').trim();
+      formatted.push(`<p class="mb-2 text-sm text-gray-800">${content}</p>`);
+    }
+  }
+
+  return formatted
+    .join('')
+    .replace(/\*\*/g, '')
+    .replace(/\*/g, '')
+    .replace(/^#+\s*/gm, '')
+    .replace(/^-\s*/gm, '');
 };
 
 export default function RequirementDetailView({
@@ -22,9 +63,122 @@ export default function RequirementDetailView({
   selectedGraphIndex,
   onGraphIndexChange,
   onGoBack,
-  onFullscreen
+  onFullscreen,
+  allRequirements
 }) {
-  const formattedRequirements = formatRequirementText(requirement?.requirements || '');
+  const navigate = useNavigate();
+  const location = useLocation();
+  const result = location.state?.result;
+
+  useEffect(() => {
+    console.log('Raw requirement:', requirement);
+    console.log('Raw requirement.requirements:', requirement?.requirements);
+    console.log('Dependencies:', requirement?.dependencies);
+    console.log('All Requirements:', allRequirements);
+    console.log('localStorage requirementsOutput:', localStorage.getItem('requirementsOutput'));
+  }, [requirement, allRequirements]);
+
+  const handleDependencyClick = (relativePath, fileName) => {
+    console.log('Clicked:', { relativePath, fileName });
+    let depRequirement = allRequirements.find(req => req.relative_path === relativePath);
+    if (!depRequirement) {
+      depRequirement = allRequirements.find(req => req.file_name === fileName);
+    }
+    console.log('Found depRequirement:', depRequirement);
+    if (depRequirement) {
+      navigate('/results', { 
+        state: { 
+          result: { 
+            requirements: allRequirements, 
+            file_hierarchy: result?.file_hierarchy || null 
+          }, 
+          selectedRequirement: depRequirement 
+        } 
+      });
+    } else {
+      console.error('No matching requirement found:', { relativePath, fileName });
+    }
+  };
+
+  const parseDependentFiles = (text) => {
+    const depSection = text.split('\n\n').find(p => p.startsWith('Dependent Files'));
+    if (!depSection) return [];
+
+    const lines = depSection
+      .replace(/\\n/g, '\n')
+      .split('\n')
+      .slice(1)
+      .filter(line => line.trim());
+    if (!lines.length || lines[0].trim() === 'No dependencies detected.') return [];
+
+    let deps = [];
+    let i = 0;
+    while (i < lines.length) {
+      const fileName = lines[i]?.trim();
+      if (fileName && fileName.match(/\.jsx$/)) {
+        const overview = lines[i + 1]?.trim() || 'No overview available.';
+        deps.push({ file_name: fileName, overview });
+        i += 2;
+      } else {
+        i++;
+      }
+    }
+    return deps;
+  };
+
+  const getDependencyOverview = (fileName) => {
+    const depReq = allRequirements.find(req => req.file_name === fileName);
+    if (!depReq?.requirements) return 'No overview available.';
+
+    const sections = depReq.requirements.split('\n\n');
+    const targetSection = sections.find(s => s.startsWith('Overview')) ||
+                         sections.find(s => s.startsWith('Key Functionalities')) ||
+                         sections[0] || '';
+    
+    const lines = targetSection
+      .split('\n')
+      .filter(l => l.trim() && !l.match(/^(Overview|Key Functionalities)$/))
+      .slice(0, 3);
+    
+    const summary = lines.join(' ').substring(0, 200) + (lines.join(' ').length > 200 ? '...' : '');
+    return summary || 'No specific overview available.';
+  };
+
+  const renderDependencies = () => {
+    const dependencies = requirement?.dependencies?.length ? requirement.dependencies : parseDependentFiles(requirement?.requirements || '');
+    console.log('Rendering dependencies:', dependencies);
+
+    if (!dependencies.length) {
+      return <p className="text-sm text-gray-600">No dependencies detected.</p>;
+    }
+
+    return (
+      <div className="mt-4 space-y-3">
+        {dependencies.map((dep, index) => {
+          const matchedReq = allRequirements.find(req => req.file_name === dep.file_name);
+          const relativePath = matchedReq?.relative_path || '';
+          const overview = dep.dependency_reason || getDependencyOverview(dep.file_name);
+          return (
+            <div
+              key={index}
+              className={`mb-3 p-4 bg-white border border-gray-200 rounded-lg shadow-sm ${relativePath ? 'cursor-pointer hover:bg-teal-50' : ''} transition-colors duration-200`}
+              onClick={() => relativePath && handleDependencyClick(relativePath, dep.file_name)}
+            >
+              <p className="font-semibold text-teal-600">{dep.file_name}</p>
+              <p className="text-sm text-gray-500 mt-1">{overview}</p>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  const otherContent = formatRequirementSummary(
+    requirement?.requirements
+      ?.split('\n\n')
+      .filter(p => !p.startsWith('Dependent Files'))
+      .join('\n\n') || ''
+  );
 
   return (
     <div className="flex flex-col w-full h-full p-6 overflow-y-auto bg-gray-50">
@@ -32,7 +186,7 @@ export default function RequirementDetailView({
         <div className="flex items-center">
           <button
             onClick={onGoBack}
-            className="flex items-center px-4 py-2 bg-teal-100 hover:bg-teal-200 text-teal-800 rounded-lg transition-all duration-200 text-sm font-semibold shadow-lg hover:scale-105"
+            className="flex items-center px-4 py-2 bg-white text-teal-800 rounded-md transition-colors duration-200 text-sm font-semibold shadow-sm hover:bg-teal-100"
             aria-label="Go back to project structure"
           >
             <ArrowLeft className="w-5 h-5 mr-2" />
@@ -44,29 +198,28 @@ export default function RequirementDetailView({
         </div>
       </div>
 
-      <div className="mb-8 bg-white rounded-xl shadow-lg p-6">
-        <h3 className="text-xl font-semibold text-teal-700 mb-3">File Path</h3>
-        <p className="text-base text-teal-600">
+      <div className="mb-6 bg-white rounded-lg shadow-md p-6">
+        <h3 className="text-xl font-semibold text-teal-700 mb-2">File Path</h3>
+        <p className="text-base text-gray-600">
           {requirement?.relative_path || 'No path available'}
         </p>
       </div>
 
-      <div className="mb-8 bg-white rounded-xl shadow-lg p-6">
-        <h3 className="text-xl font-semibold text-teal-700 mb-3">Full Requirements</h3>
-        <div 
-          className="prose max-w-full"
-          dangerouslySetInnerHTML={{
-            __html: formattedRequirements.split('\n\n').map(paragraph => 
-              `<p class="mb-4 text-gray-800 leading-relaxed">${paragraph.trim()}</p>`
-            ).join('')
-          }}
-        />
+      <div className="mb-6 bg-white rounded-lg shadow-md p-6">
+        <h3 className="text-xl font-semibold text-teal-700 mb-2">Full Requirements</h3>
+        <div className="prose max-w-full text-gray-800">
+          <div dangerouslySetInnerHTML={{ __html: otherContent }} />
+          <div>
+            <strong className="text-teal-700 text-xl block mt-6 mb-4">Dependent Files</strong>
+            {renderDependencies()}
+          </div>
+        </div>
       </div>
 
-      <div className="mb-8 bg-white rounded-xl shadow-lg p-6">
-        <h3 className="text-xl font-semibold text-teal-700 mb-3">Diagrams</h3>
+      <div className="bg-white rounded-lg shadow-md p-6">
+        <h3 className="text-xl font-semibold text-teal-700 mb-2">Diagrams</h3>
         {isLoadingGraph ? (
-          <div className="flex items-center justify-center py-6 text-teal-600">
+          <div className="flex items-center justify-center py-6 text-gray-600">
             <svg
               className="animate-spin h-8 w-8 mr-3"
               xmlns="http://www.w3.org/2000/svg"
@@ -87,37 +240,37 @@ export default function RequirementDetailView({
                 d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
               ></path>
             </svg>
-            Loading diagrams...
+            Loading Diagrams...
           </div>
         ) : graphError ? (
           <div className="text-red-600 text-base">{graphError}</div>
         ) : graphResponses.length === 0 ? (
-          <div className="text-teal-600 text-base">No diagrams available</div>
+          <div className="text-gray-600 text-base">No diagrams available</div>
         ) : (
-          <div className="space-y-6">
+          <div className="space-y-4">
             <div className="flex items-center justify-between">
               <select
                 value={selectedGraphIndex}
                 onChange={(e) => onGraphIndexChange(Number(e.target.value))}
-                className="px-4 py-2 border border-teal-300 rounded-lg text-base text-teal-800 focus:outline-none focus:ring-2 focus:ring-teal-500 bg-white shadow-sm"
+                className="px-3 py-2 border border-gray-300 rounded-md text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-teal-500 bg-white shadow-sm"
               >
                 {graphResponses.map((graph, index) => (
                   <option key={index} value={index}>
-                    {graph.target_graph || `Diagram ${index + 1}`}
+                    {graph?.target_graph || `Diagram ${index + 1}`}
                   </option>
                 ))}
               </select>
               <button
                 onClick={onFullscreen}
-                className="flex items-center px-4 py-2 bg-teal-600 hover:bg-teal-500 text-white rounded-lg text-base font-semibold shadow-lg hover:scale-105 transition-all duration-200"
+                className="flex items-center px-3 py-2 bg-teal-600 text-white rounded-md text-sm font-semibold shadow-sm hover:bg-teal-700 transition-colors"
                 aria-label="View diagram in fullscreen"
               >
-                <Maximize2 className="w-5 h-5 mr-2" />
+                <Maximize2 className="w-4 h-4 mr-1" />
                 Fullscreen
               </button>
             </div>
-            <div className="border border-teal-200 rounded-lg p-6 bg-white shadow-lg overflow-x-auto">
-              <MermaidGraph chart={graphResponses[selectedGraphIndex]?.generated_code} />
+            <div className="border border-gray-200 rounded-md p-4 bg-white shadow-sm overflow-x-auto">
+              <MermaidGraph chart={graphResponses[selectedGraphIndex]?.generated_code || ''} />
             </div>
           </div>
         )}
