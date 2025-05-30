@@ -1,3 +1,4 @@
+
 from pydantic_settings import BaseSettings
 from pydantic import Field
 from pathlib import Path
@@ -19,7 +20,7 @@ class Settings(BaseSettings):
     # Logging configuration    
     env: str = Field("dev", env="ENV")  
     log_level: str = Field("DEBUG", env="LOG_LEVEL")
-    log_format: str = Field( "%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s", env="LOG_FORMAT")
+    log_format: str = Field("%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s", env="LOG_FORMAT")
     logs_dir: Path = Field(Path("logs"), env="LOGS_DIR")
 
     # Database configuration
@@ -29,13 +30,19 @@ class Settings(BaseSettings):
     JWT_SECRET: str = Field(..., env="JWT_SECRET")
     JWT_ALGORITHM: str = Field(..., env="JWT_ALGORITHM")
 
-    #user credentials
+    # User credentials
     AUTH_USERNAME: str = Field(..., env="AUTH_USERNAME")
     AUTH_PASSWORD: str = Field(..., env="AUTH_PASSWORD")
 
-
+    # AWS configuration
+    aws_access_key_id: str = Field(..., env="AWS_ACCESS_KEY_ID")
+    aws_secret_access_key: str = Field(..., env="AWS_SECRET_ACCESS_KEY")
+    aws_region: str = Field("ap-south-2", env="AWS_REGION")
+    bucket_name: str = Field("step-change", env="BUCKET_NAME")
 
     class Config:
         env_file = ".env"
+        env_file_encoding = "utf-8"
+        extra = "forbid"  # Disallow undefined fields for security
 
 settings = Settings()
