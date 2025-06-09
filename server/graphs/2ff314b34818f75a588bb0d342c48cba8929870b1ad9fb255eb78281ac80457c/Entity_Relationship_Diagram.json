@@ -1,0 +1,4 @@
+{
+  "target_graph": "Entity Relationship Diagram",
+  "generated_code": "graph TD\n    A[MainJSX] --> B[Configuration]\n    A --> C[UtilitySupport]\n    A --> D[AppJSX]"
+}

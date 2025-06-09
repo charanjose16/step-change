@@ -110,41 +110,159 @@ async def analyze_s3_folder(data: AnalyzeRequest, background_tasks: BackgroundTa
             {"file_name": fr.file_name, "relative_path": fr.relative_path, "requirements": fr.requirements}
             for fr in files_requirements.files
         ],
-        "file_hierarchy": file_hierarchy
+        "file_hierarchy": file_hierarchy,
+        "summary":files_requirements.project_summary
     }
 
-@router.post("/graphs", response_model=List[GraphResponse], summary="Generate graphs from file requirement")
+@router.post("/graphs", response_model=List[GraphResponse],
+
+             summary="Generate graphs from file requirement")
+
 async def get_all_graphs(payload: GraphAllRequest):
+
     """
+
     Generate graphs for the provided requirement.
-    Predefined target graphs are 'Entity Relationship Diagram' and 'Requirement Diagram'.
+
+    Predefined target graphs are 'Entity Relationship Diagram' and
+
+    'Requirement Diagram'.
+
     Returns an array of GraphResponse objects.
+
+    Implements caching based on a hash of the file content to avoid
+
+    repeated LLM calls.
+
     """
-    file_content = None
+
+    import hashlib
+
+    import os
+
+    import json
+
+    # Retrieve file content
+
     try:
+
         file_content = await retrieve_file_content(payload.requirement)
+
     except Exception as e:
+
         logger.warning(f"Could not retrieve file content: {e}")
 
+        file_content = payload.requirement
+
+    # Ensure we have a string to hash
+
+    if not isinstance(file_content, str):
+
+        file_content = str(file_content)
+
+    # Compute unique cache ID
+
+    content_hash = hashlib.sha256(
+
+        file_content.encode("utf-8")
+
+    ).hexdigest()
+
+    base_cache_dir = "graphs"
+
+    cache_dir = os.path.join(base_cache_dir, content_hash)
+
+    # Define the set of target graphs
+
     target_graphs = [
+
         "Entity Relationship Diagram",
+
         "Requirement Diagram"
+
     ]
-    
+
+    # Attempt to load from cache
+
+    if os.path.isdir(cache_dir):
+
+        cached_results = []
+
+        for tg in target_graphs:
+
+            # sanitize filename by replacing spaces with underscores
+
+            fname = f"{tg.replace(' ', '_')}.json"
+
+            fpath = os.path.join(cache_dir, fname)
+
+            if not os.path.isfile(fpath):
+
+                # Incomplete cache, skip to generation
+
+                cached_results = None
+
+                break
+
+            with open(fpath, "r", encoding="utf-8") as f:
+
+                data = json.load(f)
+
+            # Reconstruct GraphResponse
+
+            cached_results.append(GraphResponse(**data))
+
+        if cached_results is not None:
+
+            return cached_results
+
+    # Cache miss: generate the graphs
+
     tasks = [
+
         generate_graph_from_requirement(payload.requirement, tg, file_content)
+
         for tg in target_graphs
+
     ]
-    
+
     try:
+
         results = await asyncio.gather(*tasks)
-        return results
+
     except Exception as e:
+
         logger.error(f"Error generating graphs: {str(e)}")
+
         raise HTTPException(
+
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+
             detail=f"Error generating graphs: {str(e)}"
+
         )
 
+    # Persist to cache
+
+    os.makedirs(cache_dir, exist_ok=True)
+
+    for res in results:
+
+        fname = f"{res.target_graph.replace(' ', '_')}.json"
+
+        fpath = os.path.join(cache_dir, fname)
+
+        with open(fpath, "w", encoding="utf-8") as f:
+
+            json.dump({
+
+                "target_graph": res.target_graph,
+
+                "generated_code": res.generated_code
+
+            }, f, ensure_ascii=False, indent=2)
+
+    return results
+ 
 async def retrieve_file_content(requirement):
     return requirement

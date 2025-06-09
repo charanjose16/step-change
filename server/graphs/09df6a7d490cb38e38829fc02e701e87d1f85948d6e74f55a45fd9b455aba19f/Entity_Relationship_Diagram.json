@@ -1,0 +1,4 @@
+{
+  "target_graph": "Entity Relationship Diagram",
+  "generated_code": "graph TD\n    A[MotorAnalyticsSystem] --> B[DocumentProcessing]\n    A --> C[MachineLearning]\n    A --> D[APIInteractions]\n    B --> E[ProductDocumentation]\n    C --> F[PredictiveMaintenance]\n    D --> G[DataAggregation]\n    E --> H[ProductManuals]\n    E --> I[FAQs]\n    F --> J[MotorPerformanceAnalysis]\n    G --> K[DataFetching]\n    G --> L[DataPresentation]\n    H --> M[TemplateConfiguration]\n    I --> N[ContentStructuring]\n    J --> O[TrendsAnalysis]\n    J --> P[AnomaliesDetection]\n    K --> Q[APIs]\n    L --> R[UserInterfaces]\n    M --> S[DesignSpecifications]\n    N --> T[RealTimeUpdates]"
+}

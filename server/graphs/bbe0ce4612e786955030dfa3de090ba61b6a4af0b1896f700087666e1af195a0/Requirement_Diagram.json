@@ -1,0 +1,4 @@
+{
+  "target_graph": "Requirement Diagram",
+  "generated_code": "graph TD\n    A[Document Generation] --> B[Data Aggregation]\n    B --> C[Web Scraping]\n    B --> D[Azure Blob Storage]\n    B --> E[Confluence Integration]\n    A --> F[Structured PDFs]\n    G[Motor Performance Analysis] --> H[AI Insights]\n    H --> I[Predictive Maintenance]\n    J[User Interface] --> K[Dynamic Visualization]\n    K --> L[Trend Analysis]\n    M[System Architecture] --> N[Microservices]\n    N --> O[FastAPI Backend]\n    N --> P[React Frontend]\n    Q[Workflow Integration] --> R[FastAPI Endpoints]\n    R --> S[Data Processing]\n    S --> T[Asynchronous Processing]\n    U[Business Value] --> V[Operational Efficiency]\n    V --> W[Reduced Downtime]\n    X[Technical Foundation] --> Y[Python Backend]\n    Y --> Z[React Frontend]\n    Z --> AA[Azure Cloud]"
+}

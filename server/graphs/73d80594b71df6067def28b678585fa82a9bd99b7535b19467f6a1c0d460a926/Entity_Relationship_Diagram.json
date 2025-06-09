@@ -1,0 +1,4 @@
+{
+  "target_graph": "Entity Relationship Diagram",
+  "generated_code": "graph TD\n    App[App] --> Dashboard[Dashboard]\n    App --> UserManualGenerator[UserManualGenerator]\n    App --> Footer[Footer]\n    App --> NavBar[NavBar]\n    App --> ProductConfigurator[ProductConfigurator]\n    App --> Login[Login]\n    App --> ProtectedRoute[ProtectedRoute]"
+}
