@@ -15,6 +15,9 @@ from functools import lru_cache, wraps
 from threading import Lock
 import hashlib
 import time
+import openpyxl
+from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.utils import get_column_letter
 
 # Constants
 CHUNK_GROUP_SIZE = 40
@@ -29,28 +32,41 @@ MAX_LINES_PER_CHUNK = 2000
 MAX_SECTION_TOKENS = 1000
 log_lock = Lock()
 
-# Configuration for dynamic business rule detection
+# Enhanced configuration for dynamic business rule detection
 RULES_CONFIG = {
     "financial": {
         "patterns": [
-            r"\b(interest_rate|credit_score|risk_score|loan_eligibility|payment_schedule)\s*=\s*.*[\d+\.*%*\/*\+\-].*",  # Financial calculations
-            r"\bif.*(credit_score|income|debt|risk|loan_amount).*[<>=].*",  # Conditional financial logic
+            r"\b(interest_rate|credit_score|risk_score|loan_eligibility|payment_schedule)\s*[+\-*/=]\s*[\d+\.*%*].*",  # Specific financial calculations
+            r"\bif.*\b(credit_score|income|debt|risk|loan_amount)\b.*[<>=].*\b(approve|reject|calculate|assess)\b.*",  # Financial decision logic
+            r"\bdef\s+(calculate_|compute_|assess_)(interest|loan|risk|score)\b.*",  # Financial calculation functions
         ],
-        "description": "Proprietary financial calculations or eligibility rules."
+        "description": "Proprietary financial calculations, risk assessments, or loan eligibility logic."
     },
     "ecommerce": {
         "patterns": [
-            r"\b(discount|price|total_cost)\s*=\s*.*(if|where|location|category|amount).*",  # Discount rules
-            r"\bif.*(location|category|product_type|order_value).*[<>=].*",  # Conditional discounts
+            r"\b(discount|price|total_cost|tax|shipping)\s*[+\-*/=]\s*.*(if|where|category|location|amount).*",  # Pricing and discount rules
+            r"\bif.*\b(location|category|product_type|order_value|customer_type)\b.*[<>=].*\b(discount|price|promotion)\b.*",  # Conditional pricing logic
+            r"\bdef\s+(apply_|calculate_)(discount|promotion|price)\b.*",  # Ecommerce-specific functions
         ],
-        "description": "Custom discount or pricing rules based on location or product."
+        "description": "Custom pricing, discount, or promotion rules based on business criteria."
     },
     "general": {
         "patterns": [
-            r"\b(custom_|proprietary_|internal_).*=\s*.*",  # Custom-named variables or functions
-            r"\bif.*(internal_|custom_|proprietary_).*[=><].*",  # Custom conditional logic
+            r"\b(custom_|proprietary_|internal_)(rule|logic|calc|workflow)\b.*=\s*.*",  # Custom-named business logic
+            r"\bif.*\b(custom_|proprietary_|internal_)\b.*[<>=].*\b(process|validate|compute)\b.*",  # Custom conditional logic
+            r"\bdef\s+(custom_|proprietary_|internal_)(process|validate|compute)\b.*",  # Custom processing functions
         ],
-        "description": "Organization-specific logic or custom workflows."
+        "description": "Organization-specific business logic, workflows, or proprietary computations."
+    },
+    "excel": {
+        "patterns": [
+            r"FORMULA:.*\b(SUM|AVERAGE|IF|VLOOKUP|HLOOKUP|INDEX|MATCH|COUNTIF|SUMIF|ROUND|PMT|FV|PV)\b\s*\(.*\)",  # Extended Excel formulas
+            r"FORMULA:.*\b(AND|OR|NOT|IFERROR|IFNA)\b\s*\(.*\)",  # Logical Excel formulas
+            r"DATA_VALIDATION:.*\b(list|whole|decimal|textLength|date|time|custom)\b.*",  # Data validation rules
+            r"CONDITIONAL_FORMATTING:.*\b(cellIs|expression|colorScale|dataBar|iconSet)\b.*",  # Conditional formatting
+            r"FORMULA:.*\[.*\].*",  # Formulas with named ranges or custom references
+        ],
+        "description": "Excel-specific business rules including complex formulas, data validation, and conditional formatting."
     }
 }
 
@@ -75,7 +91,7 @@ class FileRequirements(BaseModel):
 class FilesRequirements(BaseModel):
     files: List[FileRequirements]
     project_summary: str = ""
-    graphs: List[GraphResponse] = []  # New field for project summary graphs
+    graphs: List[GraphResponse] = []
 
 class OrgSpecificRules(BaseModel):
     relative_path: str
@@ -227,7 +243,7 @@ async def split_into_chunks(content: str, language: str, file_path: str, max_tok
     summary = "Summary unavailable.\n"
     if total_tokens < MAX_SAFE_TOKENS:
         summary_prompt = (
-            f"Summarize the purpose and structure of the following {language} code in 50-100 words:\n"
+            f"Summarize the purpose and structure of the following {language} content in 50-100 words:\n"
             f"```\n{content[:1500]}\n[...truncated...]\n```\n"
             "Provide a concise overview of the file's role, main components, and key functionalities."
         )
@@ -280,17 +296,62 @@ async def split_into_chunks(content: str, language: str, file_path: str, max_tok
         logger.info(f"Completed chunking for {file_path}: {len(chunks)} chunks")
     return chunks
 
-async def detect_business_rules(chunk_content: str, language: str) -> List[Dict[str, str]]:
+async def detect_business_rules(content: str, language: str) -> List[Dict[str, str]]:
     rules_detected = []
-    for domain, config in RULES_CONFIG.items():
+    # Detect rules based on language type
+    domains = ["financial", "ecommerce", "general"]
+    if language.lower() == "excel":
+        domains.append("excel")
+
+    # Step 1: Regex-based detection
+    for domain in domains:
+        config = RULES_CONFIG[domain]
         for pattern in config["patterns"]:
-            matches = re.finditer(pattern, chunk_content, re.MULTILINE | re.IGNORECASE)
+            matches = re.finditer(pattern, content, re.MULTILINE | re.IGNORECASE)
             for match in matches:
+                rule_text = match.group(0)
                 rules_detected.append({
-                    "rule": match.group(0),
+                    "rule": rule_text,
                     "description": config["description"],
-                    "domain": domain
+                    "domain": domain,
+                    "source": "regex"
                 })
+                with log_lock:
+                    logger.debug(f"Detected {domain} rule via regex: {rule_text[:100]}...")
+
+    # Step 2: Semantic LLM-based detection for complex or non-pattern-based rules
+    if len(rules_detected) < 3:  # Only run LLM if regex found fewer than 3 rules
+        semantic_prompt = (
+            f"Analyze the following {language} content for organization-specific business rules or logic not captured by regex patterns:\n"
+            f"```\n{content[:2000]}\n[...truncated...]\n```\n"
+            "Identify up to 3 organization-specific rules (e.g., proprietary calculations, custom workflows, or conditional logic). "
+            "For each rule, provide a high-level description without revealing sensitive details (e.g., 'Performs custom risk assessment based on internal criteria'). "
+            "Return a JSON list of objects with 'rule', 'description', and 'domain' fields. If no rules are found, return an empty list."
+        )
+        try:
+            async with llm_semaphore:
+                async with asyncio.timeout(15):
+                    with ThreadPoolExecutor(max_workers=1) as executor:
+                        result = await asyncio.get_event_loop().run_in_executor(
+                            executor, lambda: llm_config._llm.complete(semantic_prompt)
+                        )
+            semantic_rules = json.loads(result.text.strip())
+            for rule in semantic_rules:
+                rule["source"] = "semantic"
+                rules_detected.append(rule)
+                with log_lock:
+                    logger.debug(f"Detected {rule['domain']} rule via semantic analysis: {rule['description'][:100]}...")
+        except (json.JSONDecodeError, asyncio.TimeoutError, Exception) as e:
+            with log_lock:
+                logger.warning(f"Semantic rule detection failed: {str(e)}")
+
+    if not rules_detected:
+        with log_lock:
+            logger.debug(f"No business rules detected in content for language {language}")
+    else:
+        with log_lock:
+            logger.info(f"Detected {len(rules_detected)} business rules for language {language}")
+
     return rules_detected
 
 @retry_on_failure(max_attempts=2)
@@ -303,7 +364,7 @@ async def generate_requirements_for_chunk(chunk_content: str, chunk_index: int, 
 
     rules_detected = await detect_business_rules(chunk_content, language)
     rules_summary = (
-        "\n".join([f"Detected {rule['domain']} rule: {rule['description']}" for rule in rules_detected])
+        "\n".join([f"Detected {rule['domain']} rule ({rule['source']}): {rule['description']}" for rule in rules_detected])
         if rules_detected else "No organization-specific rules detected."
     )
 
@@ -414,7 +475,7 @@ async def extract_organization_specific_rules_for_chunk(chunk_content: str, chun
 
     rules_detected = await detect_business_rules(chunk_content, language)
     rules_summary = (
-        "\n".join([f"Detected {rule['domain']} rule: {rule['description']}" for rule in rules_detected])
+        "\n".join([f"Detected {rule['domain']} rule ({rule['source']}): {rule['description']}" for rule in rules_detected])
         if rules_detected else "No organization-specific rules detected."
     )
 
@@ -445,7 +506,7 @@ Analyze this segment:
                 logger.debug(f"Raw LLM output for org-specific rules chunk {chunk_index + 1} (hash: {chunk_hash}): {rules_text[:200]}...")
 
             rules_text = re.sub(r'\n\s*\n+', '\n\n', rules_text)
-            rules_text = re.sub(r'this chunk|this segment', 'the code', rules_text, flags=re.IGNORECASE)
+            rules_text = re.sub(r'this chunk|this segment', 'the content', rules_text, flags=re.IGNORECASE)
             if not rules_text or rules_text.isspace():
                 rules_text = "No organization-specific rules detected."
             return rules_text
@@ -624,13 +685,62 @@ async def combine_requirements(requirements_list: List[str], language: str) -> s
 def _hash_content(content: str) -> str:
     return hashlib.md5(content.encode()).hexdigest()
 
+async def extract_excel_content(file_path: str) -> str:
+    try:
+        workbook = openpyxl.load_workbook(file_path, data_only=False)
+        content_lines = []
+
+        for sheet_name in workbook.sheetnames:
+            sheet = workbook[sheet_name]
+            content_lines.append(f"Sheet: {sheet_name}")
+
+            # Extract cell values and formulas
+            for row in sheet.rows:
+                for cell in row:
+                    if cell.value is not None:
+                        cell_ref = f"{get_column_letter(cell.column)}{cell.row}"
+                        if cell.data_type == 'f':  # Formula
+                            content_lines.append(f"FORMULA: {cell_ref} = {cell.value}")
+                        else:
+                            content_lines.append(f"CELL: {cell_ref} = {cell.value}")
+
+            # Extract data validation rules
+            if sheet.data_validations:
+                for dv in sheet.data_validations.dataValidation:
+                    if dv.cells:
+                        cells = str(dv.cells)
+                        rule_type = dv.validation_type if dv.validation_type else "custom"
+                        formula = dv.formula1 if dv.formula1 else "no formula"
+                        content_lines.append(f"DATA_VALIDATION: {cells} | Type: {rule_type} | Rule: {formula}")
+
+            # Extract conditional formatting rules
+            for cf in sheet.conditional_formatting:
+                for rule in cf.rules:
+                    cells = str(cf.cells)
+                    rule_type = rule.type
+                    formula = rule.formula if rule.formula else "no formula"
+                    content_lines.append(f"CONDITIONAL_FORMATTING: {cells} | Type: {rule_type} | Formula: {formula}")
+
+        workbook.close()
+        return "\n".join(content_lines)
+    except Exception as e:
+        with log_lock:
+            logger.error(f"Error extracting Excel content from {file_path}: {str(e)}")
+        return f"Error extracting Excel content: {str(e)}"
+
 async def extract_organization_specific_rules(file_path: str, base_dir: str, language: str) -> OrgSpecificRules:
     try:
         with log_lock:
             logger.debug(f"Extracting org-specific rules for file: {file_path}, Language: {language}")
 
-        if not language:
-            _, ext = os.path.splitext(file_path)
+        # Determine if the file is an Excel file
+        _, ext = os.path.splitext(file_path)
+        is_excel = ext.lower() in {'.xlsx', '.xls'}
+        
+        if is_excel:
+            language = "Excel"
+            content = await extract_excel_content(file_path)
+        else:
             code_extensions = {'.py', '.js', '.jsx', '.ts', '.tsx', '.java', '.scala', '.rb', '.go', '.cpp', '.c', '.rs', '.kt', '.swift', '.php', '.cs'}
             if ext.lower() not in code_extensions:
                 with log_lock:
@@ -640,10 +750,9 @@ async def extract_organization_specific_rules(file_path: str, base_dir: str, lan
                     file_name=os.path.basename(file_path),
                     rules="Non-code file: Organization-specific rules extraction not applicable."
                 )
-            language = "Plain Text"
-
-        async with aiofiles.open(file_path, mode='r', encoding='utf-8') as file:
-            content = await file.read()
+            language = language or "Plain Text"
+            async with aiofiles.open(file_path, mode='r', encoding='utf-8') as file:
+                content = await file.read()
 
         total_tokens = count_tokens(content)
         with log_lock:
@@ -716,26 +825,15 @@ async def extract_organization_specific_rules(file_path: str, base_dir: str, lan
         )
 
 async def generate_project_summary(files_requirements: FilesRequirements) -> Tuple[str, List[GraphResponse]]:
-    """
-    Generate a comprehensive project summary by analyzing workflow summaries from all files.
-    
-    Args:
-        files_requirements: FilesRequirements object containing all file requirements
-        
-    Returns:
-        Tuple[str, List[GraphResponse]]: A detailed structured project summary and associated graphs
-    """
     try:
         with log_lock:
             logger.info("Starting comprehensive project summary generation")
         
-        # Extract workflow summaries and additional context from all files
         workflow_summaries = []
         file_contexts = []
         
         for file_req in files_requirements.files:
             if file_req.requirements:
-                # Extract all relevant sections
                 sections = re.split(
                     r'\n\n(?=Overview|Objective|Use Case|Key Functionalities|Workflow Summary|Dependent Files|Technical Requirements|Business Logic)', 
                     file_req.requirements
@@ -774,14 +872,11 @@ async def generate_project_summary(files_requirements: FilesRequirements) -> Tup
                 logger.warning("No valid content found for project summary")
             return "Project analysis completed with limited information available for comprehensive summary generation.", []
         
-        # Combine all available information
         combined_context = ""
         
-        # Add workflow summaries
         if workflow_summaries:
             combined_context += "WORKFLOW SUMMARIES:\n" + "\n".join(workflow_summaries) + "\n\n"
         
-        # Add additional context from files
         if file_contexts:
             combined_context += "ADDITIONAL FILE CONTEXT:\n"
             for file_info in file_contexts:
@@ -796,13 +891,11 @@ async def generate_project_summary(files_requirements: FilesRequirements) -> Tup
                     if file_info['use_case']:
                         combined_context += f"  Use Case: {file_info['use_case']}\n"
         
-        # Check token limit and truncate if necessary
         if count_tokens(combined_context) > MAX_SAFE_TOKENS:
             with log_lock:
                 logger.warning("Combined context exceeds token limit. Truncating for project summary.")
             combined_context = combined_context[:MAX_SAFE_TOKENS * 3 // 4]
         
-        # Create enhanced prompt for detailed structured project summary
         prompt = f"""
 Act as a senior technical architect and business analyst conducting a comprehensive project review.
 Based on the provided workflow summaries and file analysis, generate a detailed, well-structured project summary that follows this exact format:
@@ -832,10 +925,9 @@ Project Information:
 {combined_context}
 """
         
-        # Call Azure LLM endpoint for summary
         async with llm_semaphore:
             try:
-                async with asyncio.timeout(45):  # Increased timeout for detailed response
+                async with asyncio.timeout(45):
                     with ThreadPoolExecutor(max_workers=1) as executor:
                         result = await asyncio.get_event_loop().run_in_executor(
                             executor, lambda: llm_config._llm.complete(prompt)
@@ -843,7 +935,6 @@ Project Information:
                 
                 project_summary = result.text.strip()
                 
-                # Validate the response structure
                 required_sections = [
                     "PROJECT OVERVIEW",
                     "BUSINESS CONTEXT & OBJECTIVES", 
@@ -854,16 +945,13 @@ Project Information:
                     "TECHNICAL FOUNDATION"
                 ]
                 
-                # Check if response contains the required structure
                 missing_sections = [section for section in required_sections if section not in project_summary]
                 
                 if missing_sections or len(project_summary.split()) < 150:
                     with log_lock:
                         logger.warning(f"Generated summary may be incomplete. Missing sections: {missing_sections}")
                     
-                    # Provide a structured fallback
-                    if not project_summary or len(project_summary.split()) < 50:
-                        project_summary = f"""
+                    project_summary = f"""
 ## PROJECT OVERVIEW
 This project implements a comprehensive software solution designed to address complex business requirements through integrated system components. The solution encompasses multiple modules working in coordination to deliver automated business processes and data management capabilities.
 ## BUSINESS CONTEXT & OBJECTIVES
@@ -884,15 +972,12 @@ Built on robust technical infrastructure supporting concurrent operations, error
                     logger.info("Generated comprehensive project summary")
                     logger.debug(f"Summary length: {len(project_summary.split())} words")
                 
-                # Generate graphs for the project summary
                 graphs = []
                 try:
-                    # Generate Entity Relationship Diagram
                     erd_graph = await generate_graph_from_requirement(project_summary, target_graph="entity relationship diagram")
                     if not erd_graph.generated_code.startswith("Error"):
                         graphs.append(erd_graph)
                     
-                    # Generate Requirement Diagram
                     req_graph = await generate_graph_from_requirement(project_summary, target_graph="requirement diagram")
                     if not req_graph.generated_code.startswith("Error"):
                         graphs.append(req_graph)
@@ -920,8 +1005,13 @@ async def generate_requirements_for_file_whole(file_path: str, base_dir: str, la
         with log_lock:
             logger.debug(f"Processing file: {file_path}, Language: {language}")
 
-        if not language:
-            _, ext = os.path.splitext(file_path)
+        _, ext = os.path.splitext(file_path)
+        is_excel = ext.lower() in {'.xlsx', '.xls'}
+        
+        if is_excel:
+            language = "Excel"
+            content = await extract_excel_content(file_path)
+        else:
             code_extensions = {'.py', '.js', '.jsx', '.ts', '.tsx', '.java', '.scala', '.rb', '.go', '.cpp', '.c', '.rs', '.kt', '.swift', '.php', '.cs'}
             if ext.lower() not in code_extensions:
                 with log_lock:
@@ -932,10 +1022,9 @@ async def generate_requirements_for_file_whole(file_path: str, base_dir: str, la
                     requirements="Non-code file: Requirements generation not applicable.",
                     dependencies=[]
                 )
-            language = "Plain Text"
-
-        async with aiofiles.open(file_path, mode='r', encoding='utf-8') as file:
-            content = await file.read()
+            language = language or "Plain Text"
+            async with aiofiles.open(file_path, mode='r', encoding='utf-8') as file:
+                content = await file.read()
 
         total_tokens = count_tokens(content)
         with log_lock:
@@ -959,15 +1048,12 @@ async def generate_requirements_for_file_whole(file_path: str, base_dir: str, la
             dep_lines.append(dep.file_name)
             dep_lines.append(dep.dependency_reason.replace('\n', ' '))
         dep_text = "\\n".join(dep_lines) if dep_lines else "No dependencies detected."
-        with log_lock:
-            logger.debug(f"Raw dep_text for {file_path}: {repr(dep_text)}")
-            logger.debug(f"JSON dep_text for {file_path}: {json.dumps(dep_text)}")
 
         if total_tokens < 1000:
             content_hash = _hash_content(content)
             rules_detected = await detect_business_rules(content, language)
             rules_summary = (
-                "\n".join([f"Detected {rule['domain']} rule: {rule['description']}" for rule in rules_detected])
+                "\n".join([f"Detected {rule['domain']} rule ({rule['source']}): {rule['description']}" for rule in rules_detected])
                 if rules_detected else "No organization-specific rules detected."
             )
             if language.lower() in ['javascript', 'jsx', 'js']:
@@ -977,6 +1063,15 @@ async def generate_requirements_for_file_whole(file_path: str, base_dir: str, la
                     f"Use Case\nUsed during application initialization or runtime for UI setup.\n\n"
                     f"Key Functionalities\n1. Configuration: Defines application settings.\n\n2. Utility Support: Provides helper functions.\n\n"
                     f"Workflow Summary\nIntegrates with frontend framework for setup.\n\n"
+                    f"Dependent Files\n{dep_text}"
+                )
+            elif language.lower() == "excel":
+                req_text = (
+                    f"Overview\nExcel file {os.path.basename(file_path)} for data management and analysis. {rules_summary}\n\n"
+                    f"Objective\nTo manage and analyze business data with structured rules.\n\n"
+                    f"Use Case\nUsed for reporting, data validation, and automated calculations in business processes.\n\n"
+                    f"Key Functionalities\n1. Data Analysis: Performs calculations using formulas.\n\n2. Validation: Applies data validation rules.\n\n3. Formatting: Uses conditional formatting for visualization.\n\n"
+                    f"Workflow Summary\nSupports data entry, validation, and reporting workflows.\n\n"
                     f"Dependent Files\n{dep_text}"
                 )
             else:
@@ -990,7 +1085,6 @@ async def generate_requirements_for_file_whole(file_path: str, base_dir: str, la
                 )
             with log_lock:
                 logger.debug(f"Used small-file template for {file_path} (hash: {content_hash})")
-                logger.debug(f"req_text for {file_path}: {repr(req_text)}")
             return FileRequirements(
                 relative_path=os.path.relpath(file_path, base_dir),
                 file_name=os.path.basename(file_path),
@@ -1005,14 +1099,14 @@ async def generate_requirements_for_file_whole(file_path: str, base_dir: str, la
                     logger.warning(f"Truncated {file_path} to {len(content)} bytes")
             rules_detected = await detect_business_rules(content, language)
             rules_summary = (
-                "\n".join([f"Detected {rule['domain']} rule: {rule['description']}" for rule in rules_detected])
+                "\n".join([f"Detected {rule['domain']} rule ({rule['source']}): {rule['description']}" for rule in rules_detected])
                 if rules_detected else "No organization-specific rules detected."
             )
             prompt = (
                 f"Act as a senior business analyst reviewing a {language} source file.\n"
                 f"Generate a comprehensive business requirements document in plain text, avoiding markdown symbols.\n"
                 f"Do NOT use the phrase 'this file' or 'this code'. "
-                f"If the code contains organization-specific logic or calculations (e.g., proprietary formulas or business rules), "
+                f"If the content contains organization-specific logic or calculations (e.g., proprietary formulas or business rules), "
                 f"generalize them without revealing sensitive details. For example, instead of specifying an exact calculation, "
                 f"say 'performs proprietary calculations based on internal rules.'\n"
                 f"Use the following detected rules for context:\n{rules_summary}\n"
@@ -1040,7 +1134,7 @@ async def generate_requirements_for_file_whole(file_path: str, base_dir: str, la
                         logger.debug(f"Raw LLM output for {file_path} (hash: {content_hash}): {req_text[:200]}...")
 
                     req_text = re.sub(r'\n\s*\n+', '\n\n', req_text)
-                    req_text = re.sub(r'this file|this code', 'the code', req_text, flags=re.IGNORECASE)
+                    req_text = re.sub(r'this file|this code', 'the content', req_text, flags=re.IGNORECASE)
                     sections = re.split(r'\n\n(?=Overview|Objective|Use Case|Key Functionalities|Workflow Summary|Dependent Files)', req_text)
                     section_dict = {}
                     for section in sections:
@@ -1090,7 +1184,7 @@ async def generate_requirements_for_file_whole(file_path: str, base_dir: str, la
                     with log_lock:
                         logger.error(f"Value error during LLM processing for {file_path}: {ve}")
                     req_text = (
-                        f"Overview\nAnalysis failed for {os.path.basenameMISSION_FILE} due to invalid data. {rules_summary}\n\n"
+                        f"Overview\nAnalysis failed for {os.path.basename(file_path)} due to invalid data. {rules_summary}\n\n"
                         f"Objective\nTo support intended {language.lower()} business functions.\n\n"
                         f"Use Case\nIntended {language.lower()} business operations.\n\n"
                         f"Key Functionalities\n1. Intended Functionality: Expected to provide core features.\n\n2. Support Functions: Assists operations.\n\n"
@@ -1158,8 +1252,6 @@ async def generate_requirements_for_file_whole(file_path: str, base_dir: str, la
                     f"Dependent Files\n{dep_text}"
                 )
 
-        with log_lock:
-            logger.debug(f"Final req_text for {file_path}: {repr(req_text)}")
         return FileRequirements(
             relative_path=os.path.relpath(file_path, base_dir),
             file_name=os.path.basename(file_path),
@@ -1181,14 +1273,24 @@ async def generate_requirements_for_files_whole(directory: str) -> FilesRequirem
         logger.info(f"Starting requirements generation for {directory}")
     try:
         code_files = get_code_files(directory)
-        total_files = len(code_files)
+        all_files = []
+        for root, _, files in os.walk(directory):
+            for file in files:
+                file_path = os.path.join(root, file)
+                _, ext = os.path.splitext(file)
+                if ext.lower() in {'.xlsx', '.xls'}:
+                    all_files.append((file_path, "Excel"))
+                elif (file_path, get_file_language(file_path)) in code_files:
+                    all_files.append((file_path, get_file_language(file_path)))
+
+        total_files = len(all_files)
         with log_lock:
             logger.info(f"Found {total_files} files for requirements generation in {directory}")
 
         files_requirements = []
         completed_count = 0
 
-        file_batches = [code_files[i:i + BATCH_SIZE] for i in range(0, total_files, BATCH_SIZE)]
+        file_batches = [all_files[i:i + BATCH_SIZE] for i in range(0, total_files, BATCH_SIZE)]
         with ThreadPoolExecutor(max_workers=12) as executor:
             loop = asyncio.get_event_loop()
             for batch in file_batches:
@@ -1207,15 +1309,12 @@ async def generate_requirements_for_files_whole(directory: str) -> FilesRequirem
                 with log_lock:
                     logger.info(f"Progress: {completed_count}/{total_files} files processed ({completed_count/total_files*100:.2f}%)")
 
-        # Sort the file requirements by relative path
         files_requirements.sort(key=lambda x: x.relative_path)
         
-        # Generate the overall project summary and graphs
         files_requirements_obj = FilesRequirements(files=files_requirements)
         
         project_summary, graphs = await generate_project_summary(files_requirements_obj)
         
-        # Update the FilesRequirements object with the project summary and graphs
         files_requirements_obj.project_summary = project_summary
         files_requirements_obj.graphs = graphs
 
@@ -1226,3 +1325,4 @@ async def generate_requirements_for_files_whole(directory: str) -> FilesRequirem
         with log_lock:
             logger.error(f"Error processing directory {directory}: {str(e)}")
         return FilesRequirements(files=[])
+        

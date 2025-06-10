@@ -1,0 +1,4 @@
+{
+  "target_graph": "Requirement Diagram",
+  "generated_code": "graph TD\n    A[Overview] --> B[Objective]\n    B --> C[Use Case]\n    C --> D[Key Functionalities]\n    D --> E[Web Scraping]\n    D --> F[Azure Blob Storage Integration]\n    D --> G[Confluence Integration]\n    D --> H[Machine Learning Processing]\n    D --> I[PDF Document Creation]\n    D --> J[Real Time Progress Updates]\n    E --> K[Workflow Summary]\n    F --> K\n    G --> K\n    H --> K\n    I --> K\n    J --> K"
+}

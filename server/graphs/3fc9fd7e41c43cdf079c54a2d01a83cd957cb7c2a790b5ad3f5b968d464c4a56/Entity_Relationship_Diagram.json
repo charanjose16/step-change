@@ -1,0 +1,4 @@
+{
+  "target_graph": "Entity Relationship Diagram",
+  "generated_code": "graph TD\n    User[User] -->|uploads| ExcelFile[ExcelFile]\n    ExcelFile -->|processed by| System[System]\n    System -->|analyzes| Formula[Formula]\n    System -->|extracts| TableStructure[TableStructure]\n    System -->|documents| VBAMacro[VBAMacro]\n    System -->|generates| Report[Report]\n    Report -->|provided to| User\n    System -->|interacts with| ExternalAPI[ExternalAPI]"
+}

@@ -1,0 +1,4 @@
+{
+  "target_graph": "Entity Relationship Diagram",
+  "generated_code": "graph TD\n    EmployeeData[EmployeeData] --> PensionCalculations[PensionCalculations]\n    PensionCalculations --> EarlyRetirementFactors[EarlyRetirementFactors]\n    PensionCalculations --> CostNeutralFactors[CostNeutralFactors]\n    PensionCalculations --> PensionRevaluation[PensionRevaluation]\n    PensionCalculations --> ScenarioAnalysis[ScenarioAnalysis]\n    PensionCalculations --> DataValidation[DataValidation]\n    PensionCalculations --> ErrorChecking[ErrorChecking]\n    ScenarioAnalysis --> RetirementOutcomes[RetirementOutcomes]\n    RetirementOutcomes --> FinancialProjections[FinancialProjections]\n    FinancialProjections --> DecisionMaking[DecisionMaking]"
+}

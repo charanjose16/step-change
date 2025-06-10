@@ -1,0 +1,4 @@
+{
+  "target_graph": "Requirement Diagram",
+  "generated_code": "graph TD\n    A[Excel File Segment] --> B[Pension Calculations]\n    B --> C[Early Retirement Factors]\n    B --> D[Pension Revaluation]\n    B --> E[Data Validation]\n    B --> F[Date and Age Metrics]\n    B --> G[Custom Workflows]\n    B --> H[Proprietary Calculations]\n    B --> I[Data Integrity]\n    B --> J[Data Formatting]\n    B --> K[Data Aggregation]\n    B --> L[Interpolation and Rounding]\n    M[Workflow Summary] --> B"
+}

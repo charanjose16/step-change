@@ -1,0 +1,4 @@
+{
+  "target_graph": "Entity Relationship Diagram",
+  "generated_code": "graph TD\n    A[Script] --> B[Product]\n    B --> C[Subproduct]\n    C --> D[SubSubproduct]\n    A --> E[Log]\n    A --> F[JSONFile]"
+}

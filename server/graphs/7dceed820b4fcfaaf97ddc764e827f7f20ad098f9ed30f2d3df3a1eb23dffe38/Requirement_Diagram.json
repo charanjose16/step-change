@@ -1,0 +1,4 @@
+{
+  "target_graph": "Requirement Diagram",
+  "generated_code": "graph TD\n    A[Calculate Early Retirement Factors] --> B[Statutory Revaluation Calculations]\n    A --> C[Compute Commutation Factors]\n    A --> D[Data Validation and Error Handling]\n    A --> E[Integrate with Other Sheets]\n    A --> F[Calculate Pension Options]\n    A --> G[Revaluation and Interpolation]\n    A --> H[Calculate Date Differences]\n    A --> I[Retrieve Data with VLOOKUP]\n    A --> J[Version Control System]"
+}

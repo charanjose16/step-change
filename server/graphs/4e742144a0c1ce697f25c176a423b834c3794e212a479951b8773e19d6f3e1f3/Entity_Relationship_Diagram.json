@@ -1,0 +1,4 @@
+{
+  "target_graph": "Entity Relationship Diagram",
+  "generated_code": "graph TD\n    A[ClientRequest] --> B[DataRetrieval]\n    B --> C[WebScraping]\n    B --> D[AzureBlobStorage]\n    B --> E[Confluence]\n    C --> F[DataProcessing]\n    D --> F\n    E --> F\n    F --> G[ContentGeneration]\n    G --> H[PDFFormatting]\n    H --> I[PDFDocument]\n    I --> J[Client]\n    I --> K[AzureBlobStorageUpload]\n    G --> L[RealTimeUpdates]\n    L --> J"
+}

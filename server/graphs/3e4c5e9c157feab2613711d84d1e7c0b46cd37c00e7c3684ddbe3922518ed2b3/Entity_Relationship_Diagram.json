@@ -1,0 +1,4 @@
+{
+  "target_graph": "Entity Relationship Diagram",
+  "generated_code": "graph TD\n    A[ExcelFileSegment] --> B[PensionCalculations]\n    B --> C[LifeExpectancy]\n    B --> D[SpouseBenefits]\n    B --> E[PensionIncreases]\n    B --> F[EarlyRetirementFactors]\n    B --> G[PensionRevaluation]\n    B --> H[DateCalculations]\n    B --> I[DataValidation]\n    B --> J[ErrorHandling]\n    B --> K[CustomWorkflows]\n    B --> L[DataAggregation]\n    B --> M[Interpolation]\n    B --> N[RoundingFunctions]\n    B --> O[FormattingRules]\n    B --> P[InputDataCriteria]"
+}

@@ -1,0 +1,4 @@
+{
+  "target_graph": "Entity Relationship Diagram",
+  "generated_code": "graph TD\n    A[UtilityFile] --> B[BasicUtilities]\n    A --> C[SupportFunctions]\n    A --> D[BusinessOperations]\n    D --> E[GeneralBusinessWorkflow]"
+}

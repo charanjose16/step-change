@@ -1,0 +1,4 @@
+{
+  "target_graph": "Requirement Diagram",
+  "generated_code": "graph TD\n    A[Motor Analytics System] --> B[Document Management]\n    A --> C[Product Information Retrieval]\n    B --> D[Predictive Maintenance]\n    C --> E[Data Analytics]\n    D --> F[Downtime Reduction]\n    E --> G[Decision Making]\n    F --> H[Operational Efficiency]\n    G --> I[Consistency in Manuals]\n    H --> J[AI Driven Insights]\n    I --> K[Real Time Processing]\n    J --> L[Modular Architecture]\n    K --> M[Scalable Data Storage]\n    L --> N[Error Handling]\n    M --> O[Azure Integration]\n    N --> P[User Interaction]\n    O --> Q[Data Aggregation]\n    P --> R[Interactive Dashboards]\n    Q --> S[AI Generated Observations]\n    R --> T[Progress Updates]\n    S --> U[Seamless User Experience]"
+}

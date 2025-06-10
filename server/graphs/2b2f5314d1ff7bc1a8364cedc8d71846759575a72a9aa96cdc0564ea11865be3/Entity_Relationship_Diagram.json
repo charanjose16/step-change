@@ -1,0 +1,4 @@
+{
+  "target_graph": "Entity Relationship Diagram",
+  "generated_code": "graph TD\n    A[FooterComponent] --> B[CompanyLogo]\n    A --> C[SocialMediaLinks]\n    C --> D[LinkedIn]\n    C --> E[Twitter]\n    C --> F[Facebook]\n    C --> G[Instagram]\n    C --> H[YouTube]\n    A --> I[ResponsiveDesign]\n    A --> J[HoverEffects]"
+}

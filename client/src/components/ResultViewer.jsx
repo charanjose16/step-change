@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import axios from "../api/axiosConfig";
 import FullScreenGraph from "./FullScreenGraph";
 import RequirementDetailView from "./RequirementDetailView";
-import { Loader2, AlertTriangle, ArrowLeft, FileText, Target, Building, Layers, Zap, Workflow, TrendingUp, Code, ChevronDown, BarChart3, Maximize2 } from "lucide-react";
+import { Loader2, AlertTriangle, ArrowLeft, FileText, Target, Building, Layers, Zap, Workflow, TrendingUp, Code, ChevronDown, BarChart3, Maximize2, BookOpen, Minimize2 } from "lucide-react";
 import FileHierarchy from './FileHierarchy';
 import MermaidGraph from './MermaidGraph';
 
@@ -114,8 +114,13 @@ const GraphDropdown = ({ summaryGraphResponses, loadingSummaryGraphs, summaryGra
             {selectedGraph?.target_graph || `Graph ${selectedGraphIndex + 1}`}
           </h3>
           <button
-            onClick={() => onFullscreen && onFullscreen(selectedGraph?.generated_code)}
+            onClick={() => {
+              if (onFullscreen && selectedGraph?.generated_code) {
+                onFullscreen(selectedGraph.generated_code);
+              }
+            }}
             className="flex items-center px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition-colors duration-200 text-sm"
+            disabled={!selectedGraph?.generated_code}
           >
             <Maximize2 className="h-4 w-4 mr-1" />
             Fullscreen
@@ -124,7 +129,7 @@ const GraphDropdown = ({ summaryGraphResponses, loadingSummaryGraphs, summaryGra
         
         {selectedGraph?.generated_code ? (
           <div className="border border-gray-200 rounded-lg overflow-hidden">
-            <MermaidGraph chart={selectedGraph.generated_code} />
+            <MermaidGraph chart={String(selectedGraph.generated_code)} />
           </div>
         ) : (
           <div className="text-gray-500 text-center py-8 italic border border-gray-200 rounded-lg">
@@ -143,7 +148,7 @@ const GraphDropdown = ({ summaryGraphResponses, loadingSummaryGraphs, summaryGra
   );
 };
 
-const ProjectSummaryDisplay = ({ projectSummary, loadingSummary }) => {
+const ProjectSummaryDisplay = ({ projectSummary, loadingSummary, summaryGraphResponses, loadingSummaryGraphs, summaryGraphError, onFullscreen }) => {
   const parseProjectSummary = (summary) => {
     if (!summary || typeof summary !== 'string') return null;
 
@@ -220,40 +225,47 @@ const ProjectSummaryDisplay = ({ projectSummary, loadingSummary }) => {
 
   const sections = parseProjectSummary(projectSummary);
 
-  if (!sections) {
-    return (
+  return (
+    <div className="space-y-6">
+      {/* Project Summary Section */}
       <div className="bg-white rounded-xl shadow-lg p-6">
-        <div className="flex items-center mb-4">
+        <div className="flex items-center mb-6">
           <FileText className="h-6 w-6 text-teal-600 mr-2" />
           <h1 className="text-2xl font-bold text-teal-800">Project Summary</h1>
         </div>
-        <p>{projectSummary}</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="bg-white rounded-xl shadow-lg p-6">
-      <div className="flex items-center mb-6">
-        <FileText className="h-6 w-6 text-teal-600 mr-2" />
-        <h1 className="text-2xl font-bold text-teal-800">Project Summary</h1>
-      </div>
-      
-      <div className="space-y-4">
-        {sections.map((section, index) => (
-          <div key={section.key}>
-            <div className="flex items-center space-x-3 mb-2">
-              <div className="text-gray-600">
-                {getSectionIcon(section.title)}
+        
+        {sections ? (
+          <div className="space-y-4">
+            {sections.map((section, index) => (
+              <div key={section.key} className="border-l-4 border-teal-200 pl-4">
+                <div className="flex items-center space-x-3 mb-2">
+                  <div className="text-teal-600">
+                    {getSectionIcon(section.title)}
+                  </div>
+                  <h3 className="text-lg font-semibold text-gray-800">
+                    {section.title}
+                  </h3>
+                </div>
+                <div className="text-gray-700 leading-relaxed">
+                  {section.content}
+                </div>
               </div>
-              <h3 className="text-lg font-semibold text-gray-800">
-                {section.title}
-              </h3>
-            </div>
-            <p>{section.content}</p>
+            ))}
           </div>
-        ))}
+        ) : (
+          <div className="text-gray-700 leading-relaxed">
+            {projectSummary}
+          </div>
+        )}
       </div>
+
+      {/* Project Graphs Section */}
+      <GraphDropdown
+        summaryGraphResponses={summaryGraphResponses}
+        loadingSummaryGraphs={loadingSummaryGraphs}
+        summaryGraphError={summaryGraphError}
+        onFullscreen={onFullscreen}
+      />
     </div>
   );
 };
@@ -262,6 +274,7 @@ export default function ResultViewer() {
     const [loadedRequirements, setLoadedRequirements] = useState(null);
     const [loadError, setLoadError] = useState("");
     const [selectedRequirement, setSelectedRequirement] = useState(null);
+    const [showProjectSummary, setShowProjectSummary] = useState(false);
     const [graphResponses, setGraphResponses] = useState([]);
     const [loadingGraph, setLoadingGraph] = useState(false);
     const [graphError, setGraphError] = useState("");
@@ -273,6 +286,7 @@ export default function ResultViewer() {
     const [summaryGraphResponses, setSummaryGraphResponses] = useState([]);
     const [loadingSummaryGraphs, setLoadingSummaryGraphs] = useState(false);
     const [summaryGraphError, setSummaryGraphError] = useState("");
+    const [isRightSectionFullscreen, setIsRightSectionFullscreen] = useState(false);
     const location = useLocation();
     const navigate = useNavigate();
     const result = location.state?.result;
@@ -287,6 +301,7 @@ export default function ResultViewer() {
         setLoadError("");
         setLoadedRequirements(null);
         setSelectedRequirement(initialSelectedRequirement || null);
+        setShowProjectSummary(false);
         setGraphResponses([]);
         setGraphError("");
         setIsFullScreen(false);
@@ -426,9 +441,9 @@ export default function ResultViewer() {
 
     useEffect(() => {
         const fetchSummaryGraphs = async () => {
-            if (!projectSummary?.trim()) {
+            if (!projectSummary?.trim() || !showProjectSummary) {
                 setSummaryGraphResponses([]);
-                setSummaryGraphError("No project summary text available for graph generation.");
+                setSummaryGraphError("");
                 setLoadingSummaryGraphs(false);
                 return;
             }
@@ -457,21 +472,13 @@ export default function ResultViewer() {
             }
         };
 
-        if (projectSummary) {
+        if (showProjectSummary && projectSummary) {
             fetchSummaryGraphs();
-        } else {
-            setSummaryGraphResponses([]);
-            setSummaryGraphError("");
-            setLoadingSummaryGraphs(false);
         }
-    }, [projectSummary]);
+    }, [projectSummary, showProjectSummary]);
 
     const handleGoBack = () => {
-        if (selectedRequirement) {
-            setSelectedRequirement(null);
-        } else {
-            navigate('/dashboard');
-        }
+        navigate('/dashboard');
     };
 
     const handleGraphIndexChange = (newIndex) => {
@@ -479,98 +486,234 @@ export default function ResultViewer() {
     };
 
     const handleFullscreen = (chartData = null) => {
-        if (chartData) {
+        if (chartData && typeof chartData === 'string') {
             setFullScreenChart(chartData);
-        } else {
-            setFullScreenChart(graphResponses?.[detailGraphIndex]?.generated_code);
+            setIsFullScreen(true);
+        } else if (graphResponses?.[detailGraphIndex]?.generated_code) {
+            setFullScreenChart(String(graphResponses[detailGraphIndex].generated_code));
+            setIsFullScreen(true);
         }
-        setIsFullScreen(true);
+    };
+
+    const handleRightSectionFullscreen = () => {
+        setIsRightSectionFullscreen(!isRightSectionFullscreen);
     };
 
     const handleViewFile = (file) => {
-        const requirement = result?.requirements.find(
+        const requirement = result?.requirements?.find(
             req => req.file_name === file.name || req.relative_path === file.path
         );
         if (requirement) {
             setSelectedRequirement(requirement);
+            setShowProjectSummary(false);
         }
+    };
+
+    const handleShowProjectSummary = () => {
+        setSelectedRequirement(null);
+        setShowProjectSummary(true);
+    };
+
+    const handleClearSelection = () => {
+        setSelectedRequirement(null);
+        setShowProjectSummary(false);
     };
 
     let content = null;
     if (loadError) {
         content = (
-            <div className="flex items-center justify-center py-12 text-red-600">
+            <div className="flex items-center justify-center h-screen text-red-600">
                 <AlertTriangle className="h-8 w-8 mr-3" />
-                {loadError}
+                <span>{loadError}</span>
             </div>
         );
     } else if (!loadedRequirements) {
         content = (
-            <div className="flex items-center justify-center py-12 text-teal-600">
+            <div className="flex items-center justify-center h-screen text-teal-600">
                 <Loader2 className="h-8 w-8 animate-spin mr-3" />
-                Loading results...
+                <span>Loading results...</span>
             </div>
-        );
-    } else if (selectedRequirement) {
-        content = (
-            <RequirementDetailView
-                requirement={selectedRequirement}
-                graphResponses={graphResponses}
-                isLoadingGraph={loadingGraph}
-                graphError={graphError}
-                selectedGraphIndex={detailGraphIndex}
-                onGraphIndexChange={handleGraphIndexChange}
-                onGoBack={handleGoBack}
-                onFullscreen={handleFullscreen}
-                allRequirements={result?.requirements || []}
-            />
         );
     } else {
         content = (
-            <div className="flex flex-col items-center w-full min-h-screen p-8 bg-gradient-to-br from-teal-50 to-teal-100">
-                <div className="flex items-center justify-between w-full max-w-5xl mb-6">
-                    <h2 className="text-3xl font-bold text-teal-800 animate-fadeIn">
-                        Project Structure
-                    </h2>
-                    <button
-                        onClick={handleGoBack}
-                        className="flex items-center px-4 py-2 bg-teal-100 hover:bg-teal-200 text-teal-800 rounded-lg transition-all duration-200 text-sm font-semibold shadow-lg hover:scale-105"
-                        aria-label="Back to dashboard"
-                    >
-                        <ArrowLeft className="w-4 h-4 mr-1" />
-                        Back to Dashboard
-                    </button>
-                </div>
-                <div className="w-full max-w-5xl mb-8">
-                    {result?.file_hierarchy ? (
-                        <FileHierarchy 
-                            fileHierarchy={result.file_hierarchy}
-                            onViewFile={handleViewFile}
-                        />
-                    ) : (
-                        <div className="text-teal-600 text-center py-12 text-lg">
-                            No project structure available. Please analyze a valid codebase.
+            <div className="h-screen flex bg-gradient-to-br from-teal-50 to-teal-100 overflow-hidden">
+                {/* Left Sidebar - File Hierarchy (30%) - Hide in fullscreen mode */}
+                {!isRightSectionFullscreen && (
+                    <div className="w-[30%] bg-white shadow-lg border-r border-gray-200 flex flex-col h-full">
+                        {/* Fixed Header */}
+                        <div className="p-6 border-b border-gray-200 flex-shrink-0">
+                            <div className="flex items-center justify-between mb-4">
+                                <h2 className="text-xl font-bold text-teal-800">
+                                    Project Structure
+                                </h2>
+                                <button
+                                    onClick={handleGoBack}
+                                    className="flex items-center px-3 py-1 bg-teal-100 hover:bg-teal-200 text-teal-800 rounded-lg transition-all duration-200 text-sm font-semibold"
+                                    aria-label="Back to dashboard"
+                                >
+                                    <ArrowLeft className="w-4 h-4 mr-1" />
+                                    Dashboard
+                                </button>
+                            </div>
                         </div>
-                    )}
-                </div>
-                <div className="w-full max-w-5xl">
-                    <ProjectSummaryDisplay
-                        projectSummary={projectSummary}
-                        loadingSummary={loadingSummary}
-                    />
-                    <GraphDropdown
-                        summaryGraphResponses={summaryGraphResponses}
-                        loadingSummaryGraphs={loadingSummaryGraphs}
-                        summaryGraphError={summaryGraphError}
-                        onFullscreen={handleFullscreen}
-                    />
+                        
+                        {/* Scrollable Content */}
+                        <div className="flex-1 overflow-y-auto p-4">
+                            {/* Project Summary Button */}
+                            <div className="mb-4">
+                                <button
+                                    onClick={handleShowProjectSummary}
+                                    className={`w-full flex items-center px-4 py-3 rounded-lg transition-all duration-200 font-medium text-left ${
+                                        showProjectSummary 
+                                            ? 'bg-teal-100 text-teal-800 border-2 border-teal-200' 
+                                            : 'bg-gray-50 hover:bg-teal-50 text-gray-700 hover:text-teal-700 border-2 border-transparent hover:border-teal-100'
+                                    }`}
+                                >
+                                    <BookOpen className="w-5 h-5 mr-3 flex-shrink-0" />
+                                    <span>Project Summary</span>
+                                </button>
+                            </div>
+
+                            {/* File Hierarchy */}
+                            <div className="border-t border-gray-200 pt-4">
+                                <h3 className="text-sm font-semibold text-gray-600 mb-3 uppercase tracking-wide">
+                                    Files
+                                </h3>
+                                {result?.file_hierarchy ? (
+                                    <FileHierarchy 
+                                        fileHierarchy={result.file_hierarchy}
+                                        onViewFile={handleViewFile}
+                                        selectedFile={selectedRequirement}
+                                    />
+                                ) : (
+                                    <div className="text-gray-500 text-center py-8 text-sm">
+                                        No project structure available.
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Right Content Area (70% or 100% in fullscreen) */}
+                <div className={`${isRightSectionFullscreen ? 'w-full' : 'flex-1'} flex flex-col h-full overflow-hidden transition-all duration-300`}>
+                    {/* Fixed Header */}
+                    <div className="bg-white shadow-sm border-b border-gray-200 p-6 flex-shrink-0">
+                        <div className="flex items-center justify-between">
+                            <h1 className="text-2xl font-bold text-gray-800 min-w-0 flex-1">
+                                {showProjectSummary ? 'Project Summary' : 
+                                 selectedRequirement ? selectedRequirement.file_name || selectedRequirement.relative_path : 
+                                 'Welcome to Project Analysis'}
+                            </h1>
+                            <div className="flex items-center gap-2 ml-4">
+                                {/* Fullscreen Toggle Button */}
+                                <button
+                                    onClick={handleRightSectionFullscreen}
+                                    className="flex items-center px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition-all duration-200 text-sm font-semibold"
+                                    title={isRightSectionFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
+                                >
+                                    {isRightSectionFullscreen ? (
+                                        <>
+                                            <Minimize2 className="w-4 h-4 mr-1" />
+                                            Exit Fullscreen
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Maximize2 className="w-4 h-4 mr-1" />
+                                            Fullscreen
+                                        </>
+                                    )}
+                                </button>
+                                
+                                {/* Back Button */}
+                                {(selectedRequirement || showProjectSummary) && (
+                                    <button
+                                        onClick={handleClearSelection}
+                                        className="flex items-center px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition-all duration-200 text-sm font-semibold"
+                                    >
+                                        <ArrowLeft className="w-4 h-4 mr-1" />
+                                        Back
+                                    </button>
+                                )}
+                                
+                                {/* Dashboard Button - Only show in fullscreen mode */}
+                                {isRightSectionFullscreen && (
+                                    <button
+                                        onClick={handleGoBack}
+                                        className="flex items-center px-3 py-2 bg-teal-100 hover:bg-teal-200 text-teal-800 rounded-lg transition-all duration-200 text-sm font-semibold"
+                                        aria-label="Back to dashboard"
+                                    >
+                                        <ArrowLeft className="w-4 h-4 mr-1" />
+                                        Dashboard
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Scrollable Content with fixed height to prevent layout shifts */}
+                    <div className="flex-1 overflow-y-auto bg-gray-50" style={{ minHeight: 0 }}>
+                        {showProjectSummary ? (
+                            <div className="p-8">
+                                <ProjectSummaryDisplay
+                                    projectSummary={projectSummary}
+                                    loadingSummary={loadingSummary}
+                                    summaryGraphResponses={summaryGraphResponses}
+                                    loadingSummaryGraphs={loadingSummaryGraphs}
+                                    summaryGraphError={summaryGraphError}
+                                    onFullscreen={handleFullscreen}
+                                />
+                            </div>
+                        ) : selectedRequirement ? (
+                            <div className="h-full">
+                                <RequirementDetailView
+                                    requirement={selectedRequirement}
+                                    graphResponses={graphResponses}
+                                    isLoadingGraph={loadingGraph}
+                                    graphError={graphError}
+                                    selectedGraphIndex={detailGraphIndex}
+                                    onGraphIndexChange={handleGraphIndexChange}
+                                    onGoBack={handleClearSelection}
+                                    onFullscreen={handleFullscreen}
+                                    allRequirements={result?.requirements || []}
+                                />
+                            </div>
+                        ) : (
+                            <div className="p-8">
+                                <div className="bg-white rounded-xl shadow-lg p-8 text-center">
+                                    <div className="mb-6">
+                                        <FileText className="h-16 w-16 text-teal-600 mx-auto mb-4" />
+                                        <h2 className="text-2xl font-bold text-gray-800 mb-2">
+                                            Ready to Explore
+                                        </h2>
+                                        <p className="text-gray-600 max-w-md mx-auto">
+                                            {isRightSectionFullscreen 
+                                                ? "Exit fullscreen to access the project structure or use the buttons above to navigate."
+                                                : "Select a file from the project structure or view the project summary to get started with your analysis."
+                                            }
+                                        </p>
+                                    </div>
+                                    
+                                    <div className="flex flex-col sm:flex-row gap-4 justify-center">
+                                        <button
+                                            onClick={handleShowProjectSummary}
+                                            className="flex items-center px-6 py-3 bg-teal-600 hover:bg-teal-700 text-white rounded-lg transition-colors duration-200 font-medium"
+                                        >
+                                            <BookOpen className="w-5 h-5 mr-2" />
+                                            View Project Summary
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
         );
     }
 
     return (
-        <div className="min-h-screen flex flex-col bg-gray-50">
+        <div className="h-screen overflow-hidden bg-gray-50">
             {content}
             {isFullScreen && fullScreenChart && (
                 <FullScreenGraph

@@ -1,0 +1,4 @@
+{
+  "target_graph": "Requirement Diagram",
+  "generated_code": "graph TD\n    A[Motor Data Analysis] --> B[Predictive Maintenance]\n    A --> C[Document Management]\n    B --> D[Motor Reliability]\n    B --> E[Downtime Reduction]\n    C --> F[Document Generation]\n    C --> G[Document Querying]\n    H[Microservices Architecture] --> I[FastAPI]\n    H --> J[Azure Integration]\n    I --> K[Scalable Web APIs]\n    J --> L[Data Storage]\n    J --> M[Data Processing]\n    N[AI Models] --> O[Maintenance Insights]\n    N --> P[Trend Analysis]\n    Q[Interactive Dashboards] --> R[User Exploration]\n    S[Document Conversion] --> T[Azure Blob Storage]\n    U[Real-time Updates] --> V[Error Handling]\n    W[Python Backend] --> X[React Frontend]\n    W --> Y[API Communication]\n    Z[Asynchronous Processing] --> AA[Data Flow]\n    Z --> AB[Scalability]"
+}

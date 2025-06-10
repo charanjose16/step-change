@@ -1,0 +1,4 @@
+{
+  "target_graph": "Requirement Diagram",
+  "generated_code": "graph TD\n    A[Upload Excel File] --> B[Extract Formulas]\n    B --> C[Analyze Dependencies]\n    C --> D[Interact with AI Service]\n    D --> E[Generate Documentation]\n    E --> F[Download Report]\n    A --> G[Web Interface]\n    G --> F"
+}

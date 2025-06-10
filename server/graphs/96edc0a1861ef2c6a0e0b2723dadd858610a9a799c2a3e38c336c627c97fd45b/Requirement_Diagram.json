@@ -1,0 +1,4 @@
+{
+  "target_graph": "Requirement Diagram",
+  "generated_code": "graph TD\n    A[Project Overview] --> B[Business Context Objectives]\n    A --> C[System Architecture Approach]\n    A --> D[Key Capabilities Features]\n    A --> E[Workflow Process Integration]\n    A --> F[Business Value Impact]\n    A --> G[Technical Foundation]\n    B --> H[Efficiency in Auditing]\n    B --> I[Compliance Knowledge Transfer]\n    C --> J[Python Based System]\n    C --> K[Modular Design]\n    C --> L[API Driven Interactions]\n    D --> M[Extract Analyze Formulas]\n    D --> N[AI Service Interaction]\n    D --> O[User Friendly Interface]\n    D --> P[Concurrent Processing]\n    E --> Q[Upload Excel Files]\n    E --> R[Generate Reports]\n    F --> S[Efficiency Gains]\n    F --> T[Improved Productivity]\n    G --> U[Python Core Processing]\n    G --> V[API Driven Scalability]"
+}

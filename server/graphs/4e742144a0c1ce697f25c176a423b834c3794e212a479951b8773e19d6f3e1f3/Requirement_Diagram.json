@@ -1,0 +1,4 @@
+{
+  "target_graph": "Requirement Diagram",
+  "generated_code": "graph TD\n    A[Data Aggregation] --> B[Multilingual Support]\n    B --> C[Document Conversion]\n    C --> D[Progress Updates]\n    D --> E[PDF Generation]\n    E --> F[Client Request Handling]"
+}

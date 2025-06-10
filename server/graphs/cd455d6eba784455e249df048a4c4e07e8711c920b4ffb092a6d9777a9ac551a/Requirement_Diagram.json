@@ -1,0 +1,4 @@
+{
+  "target_graph": "Requirement Diagram",
+  "generated_code": "graph TD\n    A[Overview] --> B[Objective]\n    B --> C[Use Case]\n    C --> D[Key Functionalities]\n    D --> E[Scrape Product Names and Links]\n    D --> F[Extract Subproduct Details]\n    D --> G[Retrieve SubSubproduct Information]\n    D --> H[Log Scraping Process]\n    D --> I[Save Data to JSON]\n    A --> J[Workflow Summary]\n    J --> K[Access Base URL]\n    K --> L[Navigate to Product Page]\n    L --> M[Extract Subproduct Details]\n    M --> N[Continue to SubSubproducts]\n    N --> O[Log and Save Data]\n    A --> P[Dependent Files]"
+}

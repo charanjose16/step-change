@@ -1,0 +1,4 @@
+{
+  "target_graph": "Entity Relationship Diagram",
+  "generated_code": "graph TD\n    User[User] --> Upload[Upload Excel File]\n    Upload --> Process[Process Excel File]\n    Process --> Extract[Extract Table Structures and Formulas]\n    Extract --> Analyze[Analyze Formulas]\n    Analyze --> Identify[Identify Dependencies]\n    Identify --> Generate[Generate Explanations]\n    Generate --> Request[Request Functional Requirements and Test Cases]\n    Request --> Report[Generate Report]\n    Report --> Download[Download Report]\n    Download --> Format[Word or Excel Format]"
+}

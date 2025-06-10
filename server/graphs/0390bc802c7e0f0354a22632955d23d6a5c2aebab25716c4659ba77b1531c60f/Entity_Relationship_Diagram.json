@@ -1,0 +1,4 @@
+{
+  "target_graph": "Entity Relationship Diagram",
+  "generated_code": "graph TD\n    A[ConfigurationFile] --> B[NavBar]\n    A --> C[ApplicationSettings]\n    A --> D[HelperFunctions]\n    B --> E[FrontendFramework]"
+}

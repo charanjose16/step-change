@@ -1,0 +1,4 @@
+{
+  "target_graph": "Requirement Diagram",
+  "generated_code": "graph TD\n    A[Web Scraping Automation] --> B[Product Information Collection]\n    B --> C[Data Organization]\n    C --> D[JSON File Storage]\n    A --> E[Activity Logging]\n    E --> F[Error Logging]\n    A --> G[SSL Warning Suppression]"
+}

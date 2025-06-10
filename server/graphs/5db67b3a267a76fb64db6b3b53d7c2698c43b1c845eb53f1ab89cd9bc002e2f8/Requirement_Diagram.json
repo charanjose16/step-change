@@ -1,0 +1,4 @@
+{
+  "target_graph": "Requirement Diagram",
+  "generated_code": "graph TD\n    A[Financial Calculations] --> B[Retirement Planning]\n    B --> C[Pension Calculations]\n    C --> D[Early Retirement Factors]\n    C --> E[Cost Neutral Factors]\n    C --> F[Pension Revaluation]\n    A --> G[Data Validation]\n    G --> H[Error Checking]\n    B --> I[Scenario Analysis]\n    I --> J[Variable Adjustments]\n    A --> K[Compliance]\n    K --> L[Statutory Requirements]\n    K --> M[Organizational Policies]"
+}

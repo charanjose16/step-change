@@ -1,0 +1,4 @@
+{
+  "target_graph": "Requirement Diagram",
+  "generated_code": "graph TD\n    A[Document Conversion] --> B[PDF Generation]\n    B --> C[Azure Blob Storage Upload]\n    C --> D[RAG System Query]\n    D --> E[Content Retrieval]\n    E --> F[Error Logging]\n    F --> G[Retry Mechanism]\n    H[Motor Data Analysis] --> I[AI Insights Generation]\n    I --> J[Performance Metrics]\n    J --> K[Trend Analysis]\n    K --> L[AI Recommendations]\n    L --> M[API Endpoints]"
+}
