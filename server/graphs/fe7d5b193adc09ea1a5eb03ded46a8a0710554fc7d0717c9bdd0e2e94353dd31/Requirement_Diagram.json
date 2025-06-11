@@ -1,4 +1,0 @@
-{
-  "target_graph": "Requirement Diagram",
-  "generated_code": "graph TD\n    A[Document Generation] --> B[PDF Conversion]\n    A --> C[Standardized Documentation]\n    D[Motor Performance Analytics] --> E[Predictive Maintenance]\n    D --> F[Anomaly Detection]\n    G[Product Information Management] --> H[Web Scraping]\n    G --> I[Product Catalog Update]\n    J[System Architecture] --> K[Microservices]\n    J --> L[FastAPI Backend]\n    J --> M[React Frontend]\n    N[Workflow Integration] --> O[File Conversion]\n    N --> P[Content Retrieval]\n    N --> Q[Azure Blob Storage]\n    R[Business Value] --> S[Operational Efficiency]\n    R --> T[Data Driven Decision Making]\n    R --> U[Cost Savings]\n    V[Technical Foundation] --> W[Python Backend]\n    V --> X[Azure Cloud]\n    V --> Y[API Driven Communication]"
-}

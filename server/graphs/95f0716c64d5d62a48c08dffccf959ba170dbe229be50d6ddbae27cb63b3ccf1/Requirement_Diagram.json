@@ -1,4 +1,0 @@
-{
-  "target_graph": "Requirement Diagram",
-  "generated_code": "graph TD\n    A[Data Integration] --> B[Web Scraping]\n    A --> C[Confluence Integration]\n    A --> D[Document Processing]\n    B --> E[Dynamic Content Extraction]\n    C --> F[Retrieve Documentation]\n    D --> G[Convert to Text]\n    H[Content Generation] --> I[Machine Learning Models]\n    I --> J[Azure OpenAI Configuration]\n    K[Output Generation] --> L[Create PDF Documents]\n    L --> M[Formatted Content]\n    N[User Interaction] --> O[Specify Product Category]\n    O --> P[Upload Document]\n    Q[Workflow] --> N\n    Q --> A\n    Q --> H\n    Q --> K"
-}

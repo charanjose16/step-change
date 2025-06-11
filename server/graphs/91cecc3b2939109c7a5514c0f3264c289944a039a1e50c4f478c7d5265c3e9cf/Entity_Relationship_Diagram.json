@@ -1,4 +1,0 @@
-{
-  "target_graph": "Entity Relationship Diagram",
-  "generated_code": "graph TD\n    A[MotorData] --> B[AnalyticsEndpoint]\n    A --> C[MaintenanceInsights]\n    B --> D[AIModels]\n    C --> D\n    D --> E[AnomalyDetection]\n    D --> F[RiskAssessment]\n    G[FileUpload] --> H[PDFConversion]\n    H --> I[AzureBlobStorage]\n    I --> J[ContentRetrieval]\n    J --> K[ContentGeneration]\n    L[ErrorHandling] --- M[Logging]\n    N[AzureIntegration] --> I\n    O[ConfluenceIntegration] --> J\n    P[WebScraping] --> K"
-}

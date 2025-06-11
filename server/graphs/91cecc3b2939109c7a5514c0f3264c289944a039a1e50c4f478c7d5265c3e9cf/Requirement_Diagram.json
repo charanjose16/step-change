@@ -1,4 +1,0 @@
-{
-  "target_graph": "Requirement Diagram",
-  "generated_code": "graph TD\n    A[Motor Data Retrieval] --> B[Motor Analytics]\n    B --> C[Maintenance Insights]\n    C --> D[Anomaly Detection]\n    A --> E[API Endpoints]\n    E --> F[Data Filtering]\n    F --> G[Trend Analysis]\n    G --> H[Operational Efficiency]\n    A --> I[Azure Integration]\n    I --> J[Data Storage]\n    J --> K[Content Retrieval]\n    K --> L[PDF Conversion]\n    L --> M[File Upload]\n    M --> N[Azure Blob Storage]\n    N --> O[Content Generation]\n    O --> P[Error Handling]\n    P --> Q[Logging Mechanisms]\n    Q --> R[Network Resilience]"
-}
