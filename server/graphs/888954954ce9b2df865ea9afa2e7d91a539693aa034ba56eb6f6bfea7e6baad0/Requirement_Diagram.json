@@ -1,0 +1,4 @@
+{
+  "target_graph": "Requirement Diagram",
+  "generated_code": "graph TD\n    A[Project Overview] --> B[Business Context]\n    B --> C[System Architecture]\n    C --> D[Key Capabilities]\n    D --> E[Workflow Integration]\n    E --> F[Business Value]\n    F --> G[Technical Foundation]"
+}

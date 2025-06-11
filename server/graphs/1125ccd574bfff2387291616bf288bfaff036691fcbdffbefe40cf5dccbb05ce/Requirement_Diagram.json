@@ -1,0 +1,4 @@
+{
+  "target_graph": "Requirement Diagram",
+  "generated_code": "graph TD\n    A[Web Scraping] --> B[Data Gathering]\n    B --> C[Azure Blob Storage Integration]\n    C --> D[Content Generation with Azure OpenAI]\n    D --> E[PDF Document Generation]\n    E --> F[Real-time Progress Tracking]"
+}

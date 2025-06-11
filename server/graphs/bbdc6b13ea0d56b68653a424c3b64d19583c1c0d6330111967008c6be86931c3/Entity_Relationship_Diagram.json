@@ -1,0 +1,4 @@
+{
+  "target_graph": "Entity Relationship Diagram",
+  "generated_code": "graph TD\n    User[User] -->|uploads| ExcelFile[ExcelFile]\n    ExcelFile -->|contains| Formula[Formula]\n    Formula -->|analyzed by| PythonScript[PythonScript]\n    PythonScript -->|integrates with| ExternalAPI[ExternalAPI]\n    PythonScript -->|generates| Report[Report]\n    Report -->|provides insights to| HRTeam[HRTeam]\n    Report -->|provides insights to| FinanceTeam[FinanceTeam]\n    PythonScript -->|calculates| RetirementBenefit[RetirementBenefit]\n    RetirementBenefit -->|informs| FinancialPlanning[FinancialPlanning]\n    FinancialPlanning -->|supports| DecisionMaking[DecisionMaking]"
+}

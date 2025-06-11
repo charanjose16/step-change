@@ -1,0 +1,4 @@
+{
+  "target_graph": "Entity Relationship Diagram",
+  "generated_code": "graph TD\n    A[Employee] --> B[RetirementBenefits]\n    B --> C[EarlyRetirementFactors]\n    B --> D[CostNeutralFactors]\n    B --> E[PensionAdjustments]\n    C --> F[YearsOfService]\n    C --> G[RetirementAge]\n    D --> H[CostNeutralCalculations]\n    E --> I[LifeExpectancyAdjustments]\n    E --> J[SpouseBenefits]\n    E --> K[PensionIncreases]\n    A --> L[EmployeeCategory]\n    A --> M[RetirementDate]\n    A --> N[Gender]"
+}

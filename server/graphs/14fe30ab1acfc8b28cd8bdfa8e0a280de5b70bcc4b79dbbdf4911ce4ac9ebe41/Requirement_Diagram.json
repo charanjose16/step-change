@@ -1,0 +1,4 @@
+{
+  "target_graph": "Requirement Diagram",
+  "generated_code": "graph TD\n    A[Calculate Pension Factors] --> B[Adjust Pension Values]\n    A --> C[Compute Commutation Factors]\n    B --> D[Ensure Data Integrity]\n    C --> D\n    D --> E[Dynamic Calculations]\n    E --> F[Structured Workflow]\n    F --> G[Support Decision Making]"
+}

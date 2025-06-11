@@ -1,0 +1,4 @@
+{
+  "target_graph": "Requirement Diagram",
+  "generated_code": "graph TD\n    A[Upload Excel File] --> B[Extract Formulas]\n    B --> C[Analyze Formulas]\n    C --> D[Identify Dependencies]\n    D --> E[Generate Structured Data]\n    E --> F[Produce Business Requirements]\n    E --> G[Generate Test Cases]\n    F --> H[Download DOCX Report]\n    G --> H\n    B --> I[Extract VBA Macros]\n    I --> J[Analyze VBA Macros]"
+}

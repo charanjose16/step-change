@@ -1,0 +1,4 @@
+{
+  "target_graph": "Requirement Diagram",
+  "generated_code": "graph TD\n    A[Upload Excel Files] --> B[Process Excel Files]\n    B --> C[Extract Table Structures]\n    B --> D[Extract Formulas]\n    D --> E[Identify Dependencies]\n    E --> F[Generate Interpretations]\n    F --> G[Compile Report DOCX]\n    G --> H[Download Report]\n    A --> I[Web Interface]\n    I --> H\n    F --> J[Azure OpenAI Integration]"
+}

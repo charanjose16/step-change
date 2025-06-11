@@ -1,0 +1,4 @@
+{
+  "target_graph": "Requirement Diagram",
+  "generated_code": "graph TD\n    A[Financial Calculations] --> B[Pension Benefits Calculation]\n    A --> C[Retirement Planning]\n    B --> D[Early Retirement Factors]\n    B --> E[Cost Neutral Factors]\n    C --> F[Financial Projections]\n    D --> G[Age and Service Calculation]\n    E --> H[Internal Guidelines Compliance]\n    F --> I[Revaluation Rates Calculation]\n    F --> J[Interpolation of Financial Data]\n    G --> K[Proprietary Formulas]\n    H --> L[Data Validation Rules]\n    I --> M[Historical Data Analysis]\n    J --> N[Precise Benefit Calculation]\n    K --> O[Final Pension Factors]\n    L --> P[Error Handling Mechanisms]\n    M --> Q[Internal Rules Application]\n    N --> R[Comparison of Pension Options]\n    O --> S[Accurate Financial Projections]\n    P --> T[Integrity of Calculations]\n    Q --> U[Compliance with Standards]\n    R --> V[Informed Decision Making]"
+}

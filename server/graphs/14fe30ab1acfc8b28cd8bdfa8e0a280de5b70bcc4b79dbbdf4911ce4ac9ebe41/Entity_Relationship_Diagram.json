@@ -1,0 +1,4 @@
+{
+  "target_graph": "Entity Relationship Diagram",
+  "generated_code": "graph TD\n    PensionSystem[System] --> ExcelFileSegment[ExcelFileSegment]\n    ExcelFileSegment --> PensionFactors[PensionFactors]\n    ExcelFileSegment --> RevaluationRates[RevaluationRates]\n    ExcelFileSegment --> CommutationFactors[CommutationFactors]\n    PensionFactors --> EarlyRetirementFactors[EarlyRetirementFactors]\n    RevaluationRates --> StatutoryRules[StatutoryRules]\n    RevaluationRates --> OrganizationalRules[OrganizationalRules]\n    CommutationFactors --> LumpSumPayments[LumpSumPayments]\n    ExcelFileSegment --> DataValidation[DataValidation]\n    ExcelFileSegment --> ErrorHandling[ErrorHandling]\n    ExcelFileSegment --> ComplexFormulas[ComplexFormulas]\n    ExcelFileSegment --> ConditionalFormatting[ConditionalFormatting]\n    PensionSystem --> FinancialReports[FinancialReports]\n    FinancialReports --> DecisionMaking[DecisionMaking]"
+}

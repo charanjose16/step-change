@@ -536,7 +536,7 @@ export default function ResultViewer() {
         );
     } else {
         content = (
-            <div className="h-screen flex bg-gradient-to-br from-teal-50 to-teal-100 overflow-hidden">
+            <div className="h-screen flex bg-gradient-to-br from-teal-50 to-teal-100 overflow-hidden transition-all duration-200">
                 {/* Left Sidebar - File Hierarchy (30%) - Hide in fullscreen mode */}
                 {!isRightSectionFullscreen && (
                     <div className="w-[30%] bg-white shadow-lg border-r border-gray-200 flex flex-col h-full">
@@ -596,9 +596,9 @@ export default function ResultViewer() {
                 )}
 
                 {/* Right Content Area (70% or 100% in fullscreen) */}
-                <div className={`${isRightSectionFullscreen ? 'w-full' : 'flex-1'} flex flex-col h-full overflow-hidden transition-all duration-300`}>
+                <div className={`${isRightSectionFullscreen ? 'w-full' : 'w-[70%]'} flex flex-col h-full overflow-hidden transition-all duration-300`}>
                     {/* Fixed Header */}
-                    <div className="bg-white shadow-sm border-b border-gray-200 p-6 flex-shrink-0">
+                    <div className="bg-white shadow-sm border-b border-gray-200 p-6 flex-shrink-0" style={{ minHeight: '88px' }}>
                         <div className="flex items-center justify-between">
                             <h1 className="text-2xl font-bold text-gray-800 min-w-0 flex-1">
                                 {showProjectSummary ? 'Project Summary' : 
@@ -652,7 +652,7 @@ export default function ResultViewer() {
                     </div>
 
                     {/* Scrollable Content with fixed height to prevent layout shifts */}
-                    <div className="flex-1 overflow-y-auto bg-gray-50" style={{ minHeight: 0 }}>
+                    <div className="flex-1 overflow-y-auto bg-gray-50" style={{ minHeight: 'calc(100vh - 120px)' }}>
                         {showProjectSummary ? (
                             <div className="p-8">
                                 <ProjectSummaryDisplay

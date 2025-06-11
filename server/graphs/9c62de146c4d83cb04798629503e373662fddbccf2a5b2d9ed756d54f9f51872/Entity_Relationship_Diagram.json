@@ -1,0 +1,4 @@
+{
+  "target_graph": "Entity Relationship Diagram",
+  "generated_code": "graph TD\n    A[ExcelFile] --> B[FormulaAnalysis]\n    A --> C[VBAMacroAnalysis]\n    B --> D[BusinessRequirements]\n    B --> E[TestCases]\n    C --> F[MacroInsights]\n    D --> G[DOCXReport]\n    E --> G\n    F --> G\n    H[WebInterface] --> A\n    H --> G"
+}
