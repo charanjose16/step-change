@@ -19,7 +19,7 @@ import openpyxl
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.utils import get_column_letter
 
-# Constants
+# Constants (unchanged)
 CHUNK_GROUP_SIZE = 40
 LLM_CONCURRENCY_LIMIT = 10
 llm_semaphore = asyncio.Semaphore(LLM_CONCURRENCY_LIMIT)
@@ -32,13 +32,14 @@ MAX_LINES_PER_CHUNK = 2000
 MAX_SECTION_TOKENS = 1000
 log_lock = Lock()
 
-# Enhanced configuration for dynamic business rule detection
+# Enhanced configuration for dynamic business rule detection (updated for VBA)
 RULES_CONFIG = {
     "financial": {
         "patterns": [
             r"\b(interest_rate|credit_score|risk_score|loan_eligibility|payment_schedule)\s*[+\-*/=]\s*[\d+\.*%*].*",  # Specific financial calculations
             r"\bif.*\b(credit_score|income|debt|risk|loan_amount)\b.*[<>=].*\b(approve|reject|calculate|assess)\b.*",  # Financial decision logic
             r"\bdef\s+(calculate_|compute_|assess_)(interest|loan|risk|score)\b.*",  # Financial calculation functions
+            r"\bSub\s+(calculate_|compute_|assess_)(cost|total|adjustment|summary)\b.*",  # VBA financial subs
         ],
         "description": "Proprietary financial calculations, risk assessments, or loan eligibility logic."
     },
@@ -47,6 +48,7 @@ RULES_CONFIG = {
             r"\b(discount|price|total_cost|tax|shipping)\s*[+\-*/=]\s*.*(if|where|category|location|amount).*",  # Pricing and discount rules
             r"\bif.*\b(location|category|product_type|order_value|customer_type)\b.*[<>=].*\b(discount|price|promotion)\b.*",  # Conditional pricing logic
             r"\bdef\s+(apply_|calculate_)(discount|promotion|price)\b.*",  # Ecommerce-specific functions
+            r"\bSub\s+(apply_|calculate_)(discount|promotion|cost|total)\b.*",  # VBA ecommerce subs
         ],
         "description": "Custom pricing, discount, or promotion rules based on business criteria."
     },
@@ -55,21 +57,24 @@ RULES_CONFIG = {
             r"\b(custom_|proprietary_|internal_)(rule|logic|calc|workflow)\b.*=\s*.*",  # Custom-named business logic
             r"\bif.*\b(custom_|proprietary_|internal_)\b.*[<>=].*\b(process|validate|compute)\b.*",  # Custom conditional logic
             r"\bdef\s+(custom_|proprietary_|internal_)(process|validate|compute)\b.*",  # Custom processing functions
+            r"\bSub\s+(custom_|proprietary_|internal_)(process|validate|compute)\b.*",  # VBA custom subs
         ],
         "description": "Organization-specific business logic, workflows, or proprietary computations."
     },
     "excel": {
         "patterns": [
-            r"FORMULA:.*\b(SUM|AVERAGE|IF|VLOOKUP|HLOOKUP|INDEX|MATCH|COUNTIF|SUMIF|ROUND|PMT|FV|PV)\b\s*\(.*\)",  # Extended Excel formulas
+            r"FORMULA:.*\b(SUM|AVERAGE|IF|VLOOKUP|HLOOKUP|INDEX|MATCH|COUNTIF|SUMIF|ROUND|PMT|FV|PV)\b\s*\(.*\)",  # Excel formulas
             r"FORMULA:.*\b(AND|OR|NOT|IFERROR|IFNA)\b\s*\(.*\)",  # Logical Excel formulas
             r"DATA_VALIDATION:.*\b(list|whole|decimal|textLength|date|time|custom)\b.*",  # Data validation rules
             r"CONDITIONAL_FORMATTING:.*\b(cellIs|expression|colorScale|dataBar|iconSet)\b.*",  # Conditional formatting
             r"FORMULA:.*\[.*\].*",  # Formulas with named ranges or custom references
+            r"\bSub\s+.*\b(totalcost|finalcost|tax|discount|overhead)\b.*",  # VBA macros with business logic
         ],
-        "description": "Excel-specific business rules including complex formulas, data validation, and conditional formatting."
+        "description": "Excel-specific business rules including complex formulas, data validation, conditional formatting, and VBA macros."
     }
 }
 
+# Model definitions (unchanged)
 class GraphResponse(BaseModel):
     target_graph: str
     generated_code: str
@@ -98,6 +103,203 @@ class OrgSpecificRules(BaseModel):
     file_name: str
     rules: str
 
+def parse_vba_macros_from_content(content: str) -> Dict[str, Dict[str, str]]:
+    """
+    Extract VBA macro names, parameters, and comments from the provided content.
+    """
+    macros = {}
+    lines = content.splitlines()
+    current_macro = None
+    macro_lines = []
+    for line in lines:
+        if line.strip().startswith('--- VBA Module:'):
+            if current_macro and macro_lines:
+                macros[current_macro] = {
+                    'parameters': extract_macro_parameters(macro_lines),
+                    'comments': extract_macro_comments(macro_lines),
+                    'logic': '\n'.join(macro_lines)
+                }
+            current_macro = line.strip().replace('--- VBA Module:', '').strip()
+            macro_lines = []
+        elif current_macro is not None:
+            macro_lines.append(line)
+    if current_macro and macro_lines:
+        macros[current_macro] = {
+            'parameters': extract_macro_parameters(macro_lines),
+            'comments': extract_macro_comments(macro_lines),
+            'logic': '\n'.join(macro_lines)
+        }
+    return macros
+
+def extract_macro_parameters(macro_lines: List[str]) -> str:
+    """
+    Extract macro parameters from the provided macro lines.
+    """
+    parameters = []
+    for line in macro_lines:
+        match = re.search(r'\bSub\s+(\w+)\s*\((.*?)\)', line, re.IGNORECASE)
+        if match:
+            parameters.append(f"{match.group(1)}({match.group(2)})")
+    return ', '.join(parameters)
+
+def extract_macro_comments(macro_lines: List[str]) -> str:
+    """
+    Extract macro comments from the provided macro lines.
+    """
+    comments = []
+    for line in macro_lines:
+        match = re.search(r"'(.*)", line, re.IGNORECASE)
+        if match:
+            comments.append(match.group(1).strip())
+    return '\n'.join(comments)
+
+def summarize_excel_vba_logic(content: str) -> str:
+    """
+    Parse the extracted Excel/VBA content and produce a detailed, step-by-step summary of all business logic, rules, calculations, and workflow automation as found in the file.
+    - For VBA: List each Sub/Function, describe its purpose, logic, and steps in plain business language.
+    - For formulas: List each formula, its cell, and what it calculates in business terms.
+    - For validations: List all data validation and conditional formatting rules.
+    - For named ranges and pivots: List and describe their business meaning.
+    """
+    lines = content.splitlines()
+    summary = []
+    macros = parse_vba_macros_from_content(content)
+    for macro, details in macros.items():
+        summary.append(f"Macro: {macro}")
+        summary.append(f"Parameters: {details['parameters']}")
+        summary.append(f"Comments: {details['comments']}")
+        summary.append(f"Logic: {details['logic']}")
+    # Formulas
+    for line in lines:
+        m = re.match(r'FORMULA: ([A-Z]+\d+) = (.+)', line)
+        if m:
+            cell, formula = m.groups()
+            summary.append(f"Formula in {cell}: {formula}")
+    # Data Validations
+    for line in lines:
+        if line.strip().startswith('DATA_VALIDATION:'):
+            summary.append(f"Data Validation Rule: {line.strip().replace('DATA_VALIDATION:', '').strip()}")
+    # Conditional Formatting
+    for line in lines:
+        if line.strip().startswith('CONDITIONAL_FORMATTING:'):
+            summary.append(f"Conditional Formatting: {line.strip().replace('CONDITIONAL_FORMATTING:', '').strip()}")
+    # Named Ranges
+    for line in lines:
+        if line.strip().startswith('- ') and ':' in line:
+            summary.append(f"Named Range: {line.strip()}")
+    # Pivot Tables
+    for line in lines:
+        if line.strip().startswith('Pivot Tables in') or line.strip().startswith('- Name:'):
+            summary.append(line.strip())
+    # External Links
+    for line in lines:
+        if line.strip().startswith('External Link:'):
+            summary.append(line.strip())
+    # If nothing found, fallback
+    if not summary:
+        return "No business logic, rules, or automation found in the file."
+    return '\n'.join(summary)
+
+async def narrative_business_logic_summary(technical_logic: str, file_path: str) -> dict:
+    from app.utils.logger import logger
+    logger.info(f"[LLM ENTRY] narrative_business_logic_summary called for file: {file_path}")
+    
+    try:
+        prompt = f"""You are a business analyst. Given the following technical summary of an Excel/VBA file, write a detailed business logic summary for stakeholders.\n\nInstructions:\n- Identify and describe each macro/subroutine, its business purpose, parameters, and how it processes data.\n- Explain input validation, calculations, adjustments, and reporting in business terms.\n- Connect technical elements (like macro names, parameters, and key formulas) to their real-world business function.\n\nExample Output (JSON):\n{{\n  \"overview\": \"The ComplexProjectCalculation macro in rule.xlsm automates project cost calculations across multiple worksheets. It processes input data, applies financial adjustments, and generates summarized reports for project budgeting and financial oversight.\",\n  \"objective\": \"To calculate and summarize project costs with adjustments for taxes, discounts, and overheads, ensuring accurate financial reporting.\",\n  \"use_case\": \"Project managers use the macro to input project data, validate entries, compute adjusted costs, and review budget status for internal and external projects during financial planning and audits.\",\n  \"key_functionalities\": [\n    \"Input Validation: Verifies that project type, hours, and rate are provided to prevent calculation errors.\",\n    \"Total Cost Calculation: Computes base project costs by multiplying hours, rate, and a project-type-specific multiplier, setting the multiplier to 1 for internal projects.\",\n    \"Cost Adjustments: Applies tax, discount, and overhead adjustments to base costs to determine final project costs.\",\n    \"Summary Generation: Populates a summary table with project names, final costs, budget status, and error messages for invalid inputs.\",\n    \"Grand Total Reporting: Calculates and displays the sum of all adjusted project costs in the summary worksheet.\"\n  ],\n  \"workflow\": \"The macro processes project data from input worksheets, performs validations and calculations, applies financial adjustments, and generates a summary report with budget alerts and grand totals.\"\n}}\n\nTECHNICAL SUMMARY (includes macro names, parameters, comments, and business logic steps):\n{technical_logic}\n\nOutput ONLY a valid JSON object with the following keys: overview, objective, use_case, key_functionalities, workflow. Do not include any text before or after the JSON. Each section should be a paragraph or bulleted list (where appropriate), written for a business audience."""
+        logger.debug(f"[LLM DEBUG] Prompt sent to LLM for file {file_path}: {prompt[:1000]}...")
+        
+        try:
+            if not hasattr(llm_config, '_llm') or llm_config._llm is None:
+                logger.error(f"[LLM ERROR] LLM client (_llm) is not initialized on llm_config for file {file_path}. Fallback will be used.")
+                raise RuntimeError("LLM client (_llm) is not initialized.")
+            import asyncio
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: llm_config._llm.complete(
+                    prompt=prompt,
+                    max_tokens=700,
+                    temperature=0.2,
+                    stop=None,
+                    model=getattr(llm_config, 'azure_openai_model', None)
+                )
+            )
+            # Extract response text
+            if hasattr(response, 'text'):
+                response_text = response.text
+            elif hasattr(response, 'content'):
+                response_text = response.content
+            else:
+                response_text = str(response)
+            logger.debug(f"[LLM DEBUG] Raw LLM response for file {file_path}: {response_text[:200]}...")
+        except Exception as e:
+            logger.error(f"[LLM ERROR] Exception during LLM call for {file_path}: {e}")
+            raise
+        
+        # Extract JSON from Markdown code block, if present
+        pattern = r"```json\s*([\s\S]*?)\s*```"
+        match = re.search(pattern, response_text)
+        if match:
+            response_text = match.group(1).strip()
+            logger.debug(f"[LLM DEBUG] Extracted JSON from Markdown block for {file_path}")
+        else:
+            logger.debug(f"[LLM DEBUG] No Markdown JSON block found; using raw response for {file_path}")
+        
+        # Try to parse JSON from response
+        try:
+            parsed = json.loads(response_text)
+            # Handle double-encoded JSON (string inside string)
+            if isinstance(parsed, str):
+                parsed = json.loads(parsed)
+            logger.info(f"[LLM SUCCESS] Parsed LLM response for file {file_path}: {parsed}")
+            # Ensure all keys exist
+            for k in ["overview", "objective", "use_case", "key_functionalities", "workflow"]:
+                if k not in parsed:
+                    parsed[k] = "[Not provided]"
+            return parsed
+        except json.JSONDecodeError as e:
+            logger.error(f"[LLM ERROR] Failed to parse LLM response as JSON for {file_path}: {e}\nRaw response: {response_text}")
+            # Return response as overview if not valid JSON
+            return {
+                "overview": response_text,
+                "objective": "[Not provided]",
+                "use_case": "[Not provided]",
+                "key_functionalities": "[Not provided]",
+                "workflow": "[Not provided]"
+            }
+    except Exception as e:
+        logger.error(f"[LLM FALLBACK] Exception in narrative_business_logic_summary for {file_path}: {e}", exc_info=True)
+        logger.info(f"[LLM FALLBACK] Using fallback narrative generation for file {file_path}")
+        # Fallback: template-based summary with keyword breakdown
+        lines = [l.strip() for l in technical_logic.splitlines() if l.strip()]
+        validations = [l for l in lines if 'validat' in l.lower() or 'check' in l.lower() or 'error' in l.lower()]
+        calculations = [l for l in lines if 'calculat' in l.lower() or 'compute' in l.lower() or 'cost' in l.lower() or 'total' in l.lower() or 'sum' in l.lower()]
+        adjustments = [l for l in lines if 'adjust' in l.lower() or 'tax' in l.lower() or 'discount' in l.lower() or 'overhead' in l.lower()]
+        summaries = [l for l in lines if 'summary' in l.lower() or 'report' in l.lower() or 'grand total' in l.lower()]
+        overview = f"This file automates business calculations and reporting for key processes, including validation, calculation, adjustment, and summary reporting." if lines else "[No business logic detected]"
+        objective = f"To automate business calculations and ensure accurate reporting and validation for business processes."
+        use_case = f"Used by business users to input data, trigger calculations, apply adjustments, and generate summary reports for operational and financial decision-making."
+        key_func_parts = []
+        if validations:
+            key_func_parts.append("1. Input Validation: " + "; ".join(validations[:2]))
+        if calculations:
+            key_func_parts.append(f"{len(key_func_parts)+1}. Calculation: " + "; ".join(calculations[:2]))
+        if adjustments:
+            key_func_parts.append(f"{len(key_func_parts)+1}. Adjustments: " + "; ".join(adjustments[:2]))
+        if summaries:
+            key_func_parts.append(f"{len(key_func_parts)+1}. Reporting: " + "; ".join(summaries[:2]))
+        if not key_func_parts:
+            key_func_parts = ["- [No detailed logic detected]"]
+        workflow = "The workflow includes input validation, business calculations, adjustment of results, and summary reporting as described above." if lines else "[No workflow detected]"
+        return {
+            "overview": overview,
+            "objective": objective,
+            "use_case": use_case,
+            "key_functionalities": "\n".join(key_func_parts),
+            "workflow": workflow
+        }
+    
+# Utility functions (unchanged)
 @lru_cache(maxsize=1000)
 def count_tokens(text: str, model: str = "gpt-4o") -> int:
     try:
@@ -298,12 +500,10 @@ async def split_into_chunks(content: str, language: str, file_path: str, max_tok
 
 async def detect_business_rules(content: str, language: str) -> List[Dict[str, str]]:
     rules_detected = []
-    # Detect rules based on language type
     domains = ["financial", "ecommerce", "general"]
-    if language.lower() == "excel":
+    if language.lower() in ["excel", "vba"]:
         domains.append("excel")
 
-    # Step 1: Regex-based detection
     for domain in domains:
         config = RULES_CONFIG[domain]
         for pattern in config["patterns"]:
@@ -319,8 +519,7 @@ async def detect_business_rules(content: str, language: str) -> List[Dict[str, s
                 with log_lock:
                     logger.debug(f"Detected {domain} rule via regex: {rule_text[:100]}...")
 
-    # Step 2: Semantic LLM-based detection for complex or non-pattern-based rules
-    if len(rules_detected) < 3:  # Only run LLM if regex found fewer than 3 rules
+    if len(rules_detected) < 3:
         semantic_prompt = (
             f"Analyze the following {language} content for organization-specific business rules or logic not captured by regex patterns:\n"
             f"```\n{content[:2000]}\n[...truncated...]\n```\n"
@@ -365,7 +564,7 @@ async def generate_requirements_for_chunk(chunk_content: str, chunk_index: int, 
     rules_detected = await detect_business_rules(chunk_content, language)
     rules_summary = (
         "\n".join([f"Detected {rule['domain']} rule ({rule['source']}): {rule['description']}" for rule in rules_detected])
-        if rules_detected else "No organization-specific rules detected."
+        if rules_detected else ""
     )
 
     prompt = f"""
@@ -439,13 +638,17 @@ Analyze this segment:
                     formatted_funcs = ["1. Basic Processing: Handles core tasks.", "2. Support Functions: Assists operations."]
                 section_dict['Key Functionalities'] = '\n\n'.join(formatted_funcs)
 
-            req_text = (
-                f"Overview\n{section_dict['Overview']}\n\n"
-                f"Objective\n{section_dict['Objective']}\n\n"
-                f"Use Case\n{section_dict['Use Case']}\n\n"
-                f"Key Functionalities\n{section_dict['Key Functionalities']}\n\n"
+            output_sections = [
+                f"Overview\n{section_dict['Overview']}",
+                f"Objective\n{section_dict['Objective']}",
+                f"Use Case\n{section_dict['Use Case']}",
+                f"Key Functionalities\n{section_dict['Key Functionalities']}",
                 f"Workflow Summary\n{section_dict['Workflow Summary']}"
-            )
+            ]
+            joined = '\n\n'.join(output_sections)
+            lines = [l for l in joined.splitlines() if l.strip() and not l.strip().endswith(':')]
+            # Do NOT add generic lines. Only output what is relevant to the file content.
+            return joined
 
             with log_lock:
                 logger.debug(f"Generated requirements for chunk {chunk_index + 1} (hash: {chunk_hash})")
@@ -476,30 +679,39 @@ async def extract_organization_specific_rules_for_chunk(chunk_content: str, chun
     rules_detected = await detect_business_rules(chunk_content, language)
     rules_summary = (
         "\n".join([f"Detected {rule['domain']} rule ({rule['source']}): {rule['description']}" for rule in rules_detected])
-        if rules_detected else "No organization-specific rules detected."
+        if rules_detected else ""
     )
 
-    prompt = f"""
-Act as a senior business analyst reviewing a {language} source file segment.
-This is segment {chunk_index + 1} of a larger file. Identify and summarize any organization-specific business rules or logic
-(e.g., proprietary calculations, custom workflows, or conditional rules) in plain text, avoiding markdown symbols (*, -, #, **).
-Do NOT use the phrase "this chunk" or "this segment". Do NOT reveal sensitive details such as code snippets, variable names, or specific values.
-For each rule, provide a high-level description of its purpose and usage (e.g., "Calculates loan eligibility using a proprietary formula based on customer data").
-Use the following detected rules for context:
-{rules_summary}
-If no organization-specific rules are found, return "No organization-specific rules detected."
-Return only the summarized rules.
-Analyze this segment:
-```{language}
-{chunk_content}
-```
-"""
+    min_lines = 3
+    if len(chunk_content) > 1000:
+        min_lines = 5
+    elif len(chunk_content) > 5000:
+        min_lines = 7
+    elif len(chunk_content) > 10000:
+        min_lines = 10
+
+    prompt = (
+        f"You are a senior business analyst. Carefully review the following {language} source file segment and produce a highly detailed, elaborate, and comprehensive business logic summary.\n"
+        f"For each section below (Overview, Objective, Use Case, Key Functionalities, Workflow Summary), provide an exhaustive, content-rich explanation based strictly on the actual file content.\n"
+        f"- Expand on every available detail: describe all functions, classes, workflows, and business scenarios in depth.\n"
+        f"- Avoid vague, generic, or filler statements. Do NOT repeat phrases like 'utility file' or 'supports operations' unless those are explicitly and uniquely justified by the file content.\n"
+        f"- For small files, elaborate as much as possible on every element, inferring business purpose, logic, and workflow from names, comments, and code structure.\n"
+        f"- For each rule, provide a high-level description of its purpose and usage (e.g., 'Calculates loan eligibility using a proprietary formula based on customer data').\n"
+        f"- Use the following detected rules for context:\n{rules_summary}\n"
+        f"- Your output MUST be at least {min_lines} lines, with every line relevant and derived from the file. If the file is small, expand each section as much as possible based on available information.\n"
+        f"- Do NOT add generic, filler, or placeholder lines. If there is insufficient business logic, only output what is truly present in the file, but do your best to elaborate on every detail.\n"
+        f"If no organization-specific rules are found, return \"\"\n"
+        f"Return only the summarized rules.\n"
+        f"Analyze this segment:\n"
+        f"```{language}\n{chunk_content}\n```\n"
+    )
     async with llm_semaphore:
         try:
             async with asyncio.timeout(30):
                 with ThreadPoolExecutor(max_workers=1) as executor:
                     result = await asyncio.get_event_loop().run_in_executor(
                         executor, lambda: llm_config._llm.complete(prompt)
+
                     )
             rules_text = result.text.strip()
             with log_lock:
@@ -508,16 +720,16 @@ Analyze this segment:
             rules_text = re.sub(r'\n\s*\n+', '\n\n', rules_text)
             rules_text = re.sub(r'this chunk|this segment', 'the content', rules_text, flags=re.IGNORECASE)
             if not rules_text or rules_text.isspace():
-                rules_text = "No organization-specific rules detected."
+                rules_text = ""
             return rules_text
         except asyncio.TimeoutError:
             with log_lock:
                 logger.error(f"LLM timed out for org-specific rules chunk {chunk_index + 1} (hash: {chunk_hash})")
-            return "No organization-specific rules detected due to timeout."
+            return ""
         except Exception as e:
             with log_lock:
                 logger.error(f"Error for org-specific rules chunk {chunk_index + 1}: {e}")
-            return f"Error extracting organization-specific rules: {str(e)}"
+            return ""
 
 async def combine_requirements(requirements_list: List[str], language: str) -> str:
     if not requirements_list:
@@ -685,44 +897,189 @@ async def combine_requirements(requirements_list: List[str], language: str) -> s
 def _hash_content(content: str) -> str:
     return hashlib.md5(content.encode()).hexdigest()
 
-async def extract_excel_content(file_path: str) -> str:
+async def extract_vba_macros(file_path: str) -> str:
+    """Extract VBA macros from .xlsm, .xlsb, or .xls files using oletools or fallback methods. Also parse macro names, parameters, and comments for richer summaries."""
     try:
-        workbook = openpyxl.load_workbook(file_path, data_only=False)
+        import subprocess
+        import sys
+        import os
+        import re
+        
+        # Check if oletools is installed
+        try:
+            import oletools.olevba as olevba
+            vba_parser = olevba.VBA_Parser(file_path)
+            vba_modules = []
+            
+            if vba_parser.detect_vba_macros():
+                for (filename, stream_path, vba_filename, vba_code) in vba_parser.extract_macros():
+                    if vba_code.strip():
+                        # Parse macro names, parameters, and comments
+                        macro_summaries = []
+                        for match in re.finditer(r'((Sub|Function)\s+(\w+)\s*\((.*?)\))', vba_code, re.IGNORECASE):
+                            header, kind, name, params = match.groups()
+                            # Extract comments before macro
+                            pre_lines = vba_code[:match.start()].splitlines()[-3:]
+                            comments = [l.strip() for l in pre_lines if l.strip().startswith("'")]
+                            macro_summaries.append(f"Macro: {name}\nType: {kind}\nParameters: {params}\nComments: {' '.join(comments) if comments else '[No comments]'}\n")
+                        vba_modules.append(f"--- VBA Module: {vba_filename} ---\n{vba_code}\n\nSummary:\n" + "\n".join(macro_summaries))
+                vba_parser.close()
+                
+                if vba_modules:
+                    return "\n\n".join(vba_modules)
+                return "No VBA macros found or could not be extracted."
+            else:
+                return "No VBA macros detected in the file."
+        except ImportError:
+            # Fallback to basic detection without oletools
+            if file_path.lower().endswith(('.xlsm', '.xlsb', '.xls')):
+                try:
+                    # Attempt to read VBA project data directly (basic approach)
+                    with open(file_path, 'rb') as f:
+                        content = f.read().decode('latin1', errors='ignore')
+                        if 'Sub ' in content or 'Function ' in content:
+                            return "VBA macros detected (detailed analysis requires oletools package: pip install oletools)"
+                        return "No VBA macros detected in the file."
+                except Exception as e:
+                    with log_lock:
+                        logger.warning(f"Fallback VBA detection failed for {file_path}: {str(e)}")
+                    return "Error extracting VBA macros: oletools not installed and fallback detection failed."
+        except Exception as e:
+            with log_lock:
+                logger.warning(f"Error extracting VBA macros from {file_path}: {str(e)}")
+            return f"Error extracting VBA macros: {str(e)}"
+            
+    except Exception as e:
+        with log_lock:
+            logger.error(f"Unexpected error in VBA macro extraction for {file_path}: {str(e)}")
+        return f"Error extracting VBA macros: {str(e)}"
+
+async def extract_excel_content(file_path: str) -> str:
+    """Extract content from Excel files (.xlsx, .xlsm, .xls) including VBA macros, formulas, validations, and formatting."""
+    try:
         content_lines = []
+        _, ext = os.path.splitext(file_path)
+        is_macro_enabled = ext.lower() in {'.xlsm', '.xlsb', '.xls'}
 
-        for sheet_name in workbook.sheetnames:
-            sheet = workbook[sheet_name]
-            content_lines.append(f"Sheet: {sheet_name}")
+        # Always try to extract VBA macros for macro-enabled files (even if workbook fails)
+        vba_content = None
+        if is_macro_enabled:
+            try:
+                vba_content = await extract_vba_macros(file_path)
+                if vba_content and not vba_content.startswith("Error"):
+                    content_lines.append("=== VBA MACROS ===")
+                    content_lines.append(vba_content)
+                    content_lines.append("")
+                elif vba_content and vba_content.startswith("Error"):
+                    content_lines.append(f"Error extracting VBA macros: {vba_content}")
+                    content_lines.append("")
+            except Exception as e:
+                content_lines.append(f"Error extracting VBA macros: {str(e)}")
+                content_lines.append("")
 
-            # Extract cell values and formulas
-            for row in sheet.rows:
-                for cell in row:
-                    if cell.value is not None:
-                        cell_ref = f"{get_column_letter(cell.column)}{cell.row}"
-                        if cell.data_type == 'f':  # Formula
-                            content_lines.append(f"FORMULA: {cell_ref} = {cell.value}")
-                        else:
-                            content_lines.append(f"CELL: {cell_ref} = {cell.value}")
+        # Try to open the workbook for reading
+        try:
+            workbook = openpyxl.load_workbook(file_path, data_only=False, read_only=True)
+        except Exception as e:
+            content_lines.append(f"Error reading workbook content: {str(e)}")
+            # If we got any VBA, at least return that
+            if content_lines:
+                return "\n".join(content_lines)
+            else:
+                return f"Error reading workbook content: {str(e)}"
 
-            # Extract data validation rules
-            if sheet.data_validations:
-                for dv in sheet.data_validations.dataValidation:
-                    if dv.cells:
-                        cells = str(dv.cells)
-                        rule_type = dv.validation_type if dv.validation_type else "custom"
-                        formula = dv.formula1 if dv.formula1 else "no formula"
-                        content_lines.append(f"DATA_VALIDATION: {cells} | Type: {rule_type} | Rule: {formula}")
-
-            # Extract conditional formatting rules
-            for cf in sheet.conditional_formatting:
-                for rule in cf.rules:
-                    cells = str(cf.cells)
-                    rule_type = rule.type
-                    formula = rule.formula if rule.formula else "no formula"
-                    content_lines.append(f"CONDITIONAL_FORMATTING: {cells} | Type: {rule_type} | Formula: {formula}")
-
-        workbook.close()
-        return "\n".join(content_lines)
+        
+        try:
+            content_lines.append("=== WORKSHEET DATA ===")
+            for sheet_name in workbook.sheetnames:
+                sheet = workbook[sheet_name]
+                content_lines.append(f"\n--- Sheet: {sheet_name} ---")
+                
+                # Extract cell values and formulas (limit to 100 rows to avoid performance issues)
+                max_rows = min(100, sheet.max_row) if sheet.max_row else 100
+                for row in sheet.iter_rows(max_row=max_rows):
+                    for cell in row:
+                        if cell.value is not None:
+                            cell_ref = f"{get_column_letter(cell.column)}{cell.row}"
+                            if cell.data_type == 'f':  # Formula
+                                content_lines.append(f"FORMULA: {cell_ref} = {cell.value}")
+                            else:
+                                content_lines.append(f"CELL: {cell_ref} = {cell.value}")
+                
+                # Extract data validation rules
+                if hasattr(sheet, 'data_validations') and sheet.data_validations.dataValidation:
+                    content_lines.append("\n  Data Validations:")
+                    for dv in sheet.data_validations.dataValidation:
+                        try:
+                            range_str = dv.sqref.ranges[0].coord if hasattr(dv, 'sqref') and dv.sqref else 'Unknown range'
+                            validation_type = getattr(dv, 'type', 'custom')
+                            formula1 = getattr(dv, 'formula1', None)
+                            formula2 = getattr(dv, 'formula2', None)
+                            
+                            validation_info = [f"Range: {range_str}", f"Type: {validation_type}"]
+                            if formula1:
+                                validation_info.append(f"Formula1: {formula1}")
+                            if formula2:
+                                validation_info.append(f"Formula2: {formula2}")
+                                
+                            content_lines.append(f"DATA_VALIDATION: {' | '.join(validation_info)}")
+                        except Exception as e:
+                            with log_lock:
+                                logger.warning(f"Error processing data validation in {sheet_name}: {str(e)}")
+                
+                # Extract conditional formatting
+                if hasattr(sheet, 'conditional_formatting') and sheet.conditional_formatting:
+                    content_lines.append("\n  Conditional Formatting:")
+                    for range_str, rules in sheet.conditional_formatting._cf_rules.items():
+                        for rule in rules:
+                            try:
+                                rule_type = rule.type
+                                formula = getattr(rule, 'formula', None)
+                                if formula:
+                                    if isinstance(formula, (list, tuple)):
+                                        formula = "; ".join([str(f) for f in formula if f])
+                                    content_lines.append(
+                                        f"CONDITIONAL_FORMATTING: Range: {range_str} | Type: {rule_type} | Formula: {formula}"
+                                    )
+                            except Exception as e:
+                                with log_lock:
+                                    logger.warning(f"Error processing conditional formatting in {sheet_name}: {str(e)}")
+                
+                # Extract named ranges
+                if hasattr(workbook, 'defined_names') and workbook.defined_names:
+                    content_lines.append("\n  Named Ranges:")
+                    if hasattr(workbook.defined_names, 'definedName'):  # Old versions
+                        for name in workbook.defined_names.definedName:
+                            content_lines.append(f"  - {name.name}: {name.value}")
+                    else:  # New versions (4.0+)
+                        for name, named_range in workbook.defined_names.items():
+                            content_lines.append(f"  - {name}: {named_range.value}")
+            
+            # Extract pivot tables
+            for sheet in workbook.worksheets:
+                if hasattr(sheet, '_pivots') and sheet._pivots:
+                    content_lines.append(f"\nPivot Tables in {sheet.title}:")
+                    for pivot in sheet._pivots:
+                        content_lines.append(f"  - Name: {pivot.name}")
+                        content_lines.append(f"    Data Source: {pivot.cache.cacheSource.worksheetSource.ref}")
+            
+            # Extract external links
+            if hasattr(workbook, 'external_links') and workbook.external_links:
+                content_lines.append("\nExternal Links:")
+                for link in workbook.external_links:
+                    content_lines.append(f"  - {link.target}")
+            
+            # Extract data connections
+            if hasattr(workbook, 'connections') and workbook.connections:
+                content_lines.append("\nData Connections:")
+                for conn in workbook.connections:
+                    content_lines.append(f"  - {conn.name}: {conn.connection_string}")
+            
+        finally:
+            workbook.close()
+            
+        return "\n".join(content_lines) if content_lines else "No content extracted from Excel file."
+        
     except Exception as e:
         with log_lock:
             logger.error(f"Error extracting Excel content from {file_path}: {str(e)}")
@@ -733,12 +1090,11 @@ async def extract_organization_specific_rules(file_path: str, base_dir: str, lan
         with log_lock:
             logger.debug(f"Extracting org-specific rules for file: {file_path}, Language: {language}")
 
-        # Determine if the file is an Excel file
         _, ext = os.path.splitext(file_path)
-        is_excel = ext.lower() in {'.xlsx', '.xls'}
+        is_excel = ext.lower() in {'.xlsx', '.xlsm', '.xls', '.xlsb'}
         
         if is_excel:
-            language = "Excel"
+            language = "Excel" if ext.lower() == '.xlsx' else "VBA"
             content = await extract_excel_content(file_path)
         else:
             code_extensions = {'.py', '.js', '.jsx', '.ts', '.tsx', '.java', '.scala', '.rb', '.go', '.cpp', '.c', '.rs', '.kt', '.swift', '.php', '.cs'}
@@ -791,7 +1147,7 @@ async def extract_organization_specific_rules(file_path: str, base_dir: str, lan
                 for i, (chunk_content, start_line, end_line) in enumerate(chunks):
                     try:
                         rules = await extract_organization_specific_rules_for_chunk(chunk_content, i, language)
-                        if rules != "No organization-specific rules detected.":
+                        if rules.strip():
                             rules_list.append(f"Chunk {i+1} (Lines {start_line}-{end_line}):\n{rules}")
                         if (i + 1) % 5 == 0 or i + 1 == len(chunks):
                             with log_lock:
@@ -800,7 +1156,7 @@ async def extract_organization_specific_rules(file_path: str, base_dir: str, lan
                         with log_lock:
                             logger.error(f"Error processing chunk {i+1} for org-specific rules in {file_path}: {e}")
                         rules_list.append(f"Chunk {i+1} (Lines {start_line}-{end_line}):\nError extracting rules: {str(e)}")
-                rules_text = "\n\n".join(rules_list) if rules_list else "No organization-specific rules detected."
+                rules_text = "\n\n".join(rules_list) if rules_list else ""
             except MemoryError as me:
                 with log_lock:
                     logger.error(f"Memory error during chunking for org-specific rules in {file_path}: {me}")
@@ -1006,10 +1362,10 @@ async def generate_requirements_for_file_whole(file_path: str, base_dir: str, la
             logger.debug(f"Processing file: {file_path}, Language: {language}")
 
         _, ext = os.path.splitext(file_path)
-        is_excel = ext.lower() in {'.xlsx', '.xls'}
+        is_excel = ext.lower() in {'.xlsx', '.xlsm', '.xls', '.xlsb'}
         
         if is_excel:
-            language = "Excel"
+            language = "Excel" if ext.lower() == '.xlsx' else "VBA"
             content = await extract_excel_content(file_path)
         else:
             code_extensions = {'.py', '.js', '.jsx', '.ts', '.tsx', '.java', '.scala', '.rb', '.go', '.cpp', '.c', '.rs', '.kt', '.swift', '.php', '.cs'}
@@ -1054,7 +1410,7 @@ async def generate_requirements_for_file_whole(file_path: str, base_dir: str, la
             rules_detected = await detect_business_rules(content, language)
             rules_summary = (
                 "\n".join([f"Detected {rule['domain']} rule ({rule['source']}): {rule['description']}" for rule in rules_detected])
-                if rules_detected else "No organization-specific rules detected."
+                if rules_detected else ""
             )
             if language.lower() in ['javascript', 'jsx', 'js']:
                 req_text = (
@@ -1065,13 +1421,26 @@ async def generate_requirements_for_file_whole(file_path: str, base_dir: str, la
                     f"Workflow Summary\nIntegrates with frontend framework for setup.\n\n"
                     f"Dependent Files\n{dep_text}"
                 )
-            elif language.lower() == "excel":
+            elif language.lower() in ["excel", "vba"]:
+                logic_summary = summarize_excel_vba_logic(content)
+                # Generate a business narrative summary from the extracted logic
+                business_narrative = await narrative_business_logic_summary(logic_summary, file_path)
+                # Format key_functionalities as numbered points with blank lines
+                key_functionalities = business_narrative['key_functionalities']
+                if isinstance(key_functionalities, list):
+                    formatted_key_funcs = [f"{i+1}. {func}" for i, func in enumerate(key_functionalities)]
+                    key_functionalities = "\n\n".join(formatted_key_funcs)
+                elif isinstance(key_functionalities, str) and key_functionalities.startswith("- "):
+                    # Handle fallback case where key_functionalities is a string with bullet points
+                    funcs = [f.strip("- ") for f in key_functionalities.split("\n") if f.strip().startswith("- ")]
+                    formatted_key_funcs = [f"{i+1}. {func}" for i, func in enumerate(funcs)]
+                    key_functionalities = "\n\n".join(formatted_key_funcs)
                 req_text = (
-                    f"Overview\nExcel file {os.path.basename(file_path)} for data management and analysis. {rules_summary}\n\n"
-                    f"Objective\nTo manage and analyze business data with structured rules.\n\n"
-                    f"Use Case\nUsed for reporting, data validation, and automated calculations in business processes.\n\n"
-                    f"Key Functionalities\n1. Data Analysis: Performs calculations using formulas.\n\n2. Validation: Applies data validation rules.\n\n3. Formatting: Uses conditional formatting for visualization.\n\n"
-                    f"Workflow Summary\nSupports data entry, validation, and reporting workflows.\n\n"
+                    f"Overview\n{business_narrative['overview']}\n\n"
+                    f"Objective\n{business_narrative['objective']}\n\n"
+                    f"Use Case\n{business_narrative['use_case']}\n\n"
+                    f"Key Functionalities\n{key_functionalities}\n\n"
+                    f"Workflow Summary\n{business_narrative['workflow']}\n\n"
                     f"Dependent Files\n{dep_text}"
                 )
             else:
@@ -1100,7 +1469,7 @@ async def generate_requirements_for_file_whole(file_path: str, base_dir: str, la
             rules_detected = await detect_business_rules(content, language)
             rules_summary = (
                 "\n".join([f"Detected {rule['domain']} rule ({rule['source']}): {rule['description']}" for rule in rules_detected])
-                if rules_detected else "No organization-specific rules detected."
+                if rules_detected else ""
             )
             prompt = (
                 f"Act as a senior business analyst reviewing a {language} source file.\n"
@@ -1278,8 +1647,9 @@ async def generate_requirements_for_files_whole(directory: str) -> FilesRequirem
             for file in files:
                 file_path = os.path.join(root, file)
                 _, ext = os.path.splitext(file)
-                if ext.lower() in {'.xlsx', '.xls'}:
-                    all_files.append((file_path, "Excel"))
+                if ext.lower() in {'.xlsx', '.xlsm', '.xls', '.xlsb'}:
+                    language = "Excel" if ext.lower() == '.xlsx' else "VBA"
+                    all_files.append((file_path, language))
                 elif (file_path, get_file_language(file_path)) in code_files:
                     all_files.append((file_path, get_file_language(file_path)))
 
@@ -1325,4 +1695,3 @@ async def generate_requirements_for_files_whole(directory: str) -> FilesRequirem
         with log_lock:
             logger.error(f"Error processing directory {directory}: {str(e)}")
         return FilesRequirements(files=[])
-        
