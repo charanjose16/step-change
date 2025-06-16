@@ -18,8 +18,9 @@ import time
 import openpyxl
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.utils import get_column_letter
+from .vector_store_service import VectorStoreService
 
-# Constants (unchanged)
+# Constants
 CHUNK_GROUP_SIZE = 40
 LLM_CONCURRENCY_LIMIT = 10
 llm_semaphore = asyncio.Semaphore(LLM_CONCURRENCY_LIMIT)
@@ -27,10 +28,33 @@ LINTER_CONCURRENCY = 300
 linter_sema = asyncio.Semaphore(LINTER_CONCURRENCY)
 MAX_MODEL_TOKENS = 128000
 MAX_SAFE_TOKENS = 50000
+MAX_EMBEDDING_TOKENS = 8192
 BATCH_SIZE = 50
 MAX_LINES_PER_CHUNK = 2000
 MAX_SECTION_TOKENS = 1000
 log_lock = Lock()
+vector_store = VectorStoreService()
+VECTOR_STORE_DIR = "vector_store"
+
+# Tokenizer and Chunking Utilities
+@lru_cache(maxsize=10)
+def get_tokenizer(model: str = "text-embedding-ada-002"):
+    return tiktoken.encoding_for_model(model)
+
+def count_tokens(text: str, model: str = "text-embedding-ada-002") -> int:
+    tokenizer = get_tokenizer(model)
+    return len(tokenizer.encode(text))
+
+def chunk_text_for_embedding(text: str, model: str = "text-embedding-ada-002", max_tokens: int = MAX_EMBEDDING_TOKENS) -> List[str]:
+    tokenizer = get_tokenizer(model)
+    tokens = tokenizer.encode(text)
+
+    chunks = []
+    for i in range(0, len(tokens), max_tokens):
+        chunk = tokens[i:i + max_tokens]
+        chunks.append(tokenizer.decode(chunk))
+
+    return chunks
 
 # Enhanced configuration for dynamic business rule detection (updated for VBA)
 RULES_CONFIG = {
@@ -504,6 +528,7 @@ async def detect_business_rules(content: str, language: str) -> List[Dict[str, s
     if language.lower() in ["excel", "vba"]:
         domains.append("excel")
 
+    # Regex-based detection
     for domain in domains:
         config = RULES_CONFIG[domain]
         for pattern in config["patterns"]:
@@ -519,14 +544,16 @@ async def detect_business_rules(content: str, language: str) -> List[Dict[str, s
                 with log_lock:
                     logger.debug(f"Detected {domain} rule via regex: {rule_text[:100]}...")
 
+    # Semantic-based detection
     if len(rules_detected) < 3:
         semantic_prompt = (
             f"Analyze the following {language} content for organization-specific business rules or logic not captured by regex patterns:\n"
             f"```\n{content[:2000]}\n[...truncated...]\n```\n"
             "Identify up to 3 organization-specific rules (e.g., proprietary calculations, custom workflows, or conditional logic). "
-            "For each rule, provide a high-level description without revealing sensitive details (e.g., 'Performs custom risk assessment based on internal criteria'). "
+            "For each rule, provide a high-level description without revealing sensitive details. "
             "Return a JSON list of objects with 'rule', 'description', and 'domain' fields. If no rules are found, return an empty list."
         )
+
         try:
             async with llm_semaphore:
                 async with asyncio.timeout(15):
@@ -534,16 +561,29 @@ async def detect_business_rules(content: str, language: str) -> List[Dict[str, s
                         result = await asyncio.get_event_loop().run_in_executor(
                             executor, lambda: llm_config._llm.complete(semantic_prompt)
                         )
-            semantic_rules = json.loads(result.text.strip())
+            output_text = result.text.strip()
+
+            with log_lock:
+                logger.debug(f"Raw LLM output: {output_text[:500]}...")
+
+            if not output_text:
+                raise ValueError("Empty response from LLM")
+
+            semantic_rules = json.loads(output_text)
+            if not isinstance(semantic_rules, list):
+                raise ValueError("LLM response is not a list")
+
             for rule in semantic_rules:
                 rule["source"] = "semantic"
                 rules_detected.append(rule)
                 with log_lock:
-                    logger.debug(f"Detected {rule['domain']} rule via semantic analysis: {rule['description'][:100]}...")
-        except (json.JSONDecodeError, asyncio.TimeoutError, Exception) as e:
+                    logger.debug(f"Detected {rule.get('domain', 'unknown')} rule via semantic: {rule.get('description', '')[:100]}...")
+
+        except (json.JSONDecodeError, ValueError, asyncio.TimeoutError, Exception) as e:
             with log_lock:
                 logger.warning(f"Semantic rule detection failed: {str(e)}")
 
+    # Final log summary
     if not rules_detected:
         with log_lock:
             logger.debug(f"No business rules detected in content for language {language}")
@@ -555,118 +595,188 @@ async def detect_business_rules(content: str, language: str) -> List[Dict[str, s
 
 @retry_on_failure(max_attempts=2)
 async def generate_requirements_for_chunk(chunk_content: str, chunk_index: int, language: str) -> str:
-    chunk_hash = hashlib.md5(chunk_content.encode()).hexdigest()
-    if count_tokens(chunk_content) > MAX_SAFE_TOKENS:
-        with log_lock:
-            logger.warning(f"Chunk {chunk_index + 1} exceeds token limit. Truncating.")
-        chunk_content = chunk_content[:MAX_SAFE_TOKENS * 3 // 4]
-
-    rules_detected = await detect_business_rules(chunk_content, language)
-    rules_summary = (
-        "\n".join([f"Detected {rule['domain']} rule ({rule['source']}): {rule['description']}" for rule in rules_detected])
-        if rules_detected else ""
-    )
-
-    prompt = f"""
-Act as a senior business analyst reviewing a {language} source file segment.
+    """Generate requirements for a code chunk with enhanced RAG"""
+    try:
+        # Calculate tokens and handle limits
+        chunk_tokens = count_tokens(chunk_content)
+        chunk_hash = hashlib.md5(chunk_content.encode()).hexdigest()
+        
+        # Get relevant context from vector store with filtering
+        context_data = await vector_store.get_related_context(
+            query=chunk_content,
+            k=3,  # Reduced from 5 to save tokens
+            filters={"language": language}
+        )
+        
+        # Calculate total tokens including context
+        context_tokens = count_tokens(context_data.get('context', ''))
+        total_tokens = chunk_tokens + context_tokens
+        
+        # If total tokens exceed limit, truncate context
+        if total_tokens > MAX_SAFE_TOKENS:
+            with log_lock:
+                logger.warning(f"Total tokens ({total_tokens}) exceed limit. Truncating context.")
+            # Keep chunk content but reduce context
+            context_data['context'] = context_data.get('context', '')[:MAX_SAFE_TOKENS // 4]
+        
+        # If chunk itself is too large, truncate it
+        if chunk_tokens > MAX_SAFE_TOKENS * 3 // 4:
+            with log_lock:
+                logger.warning(f"Chunk {chunk_index + 1} exceeds token limit. Truncating.")
+            chunk_content = chunk_content[:MAX_SAFE_TOKENS * 3 // 4]
+        
+        # Detect business rules
+        rules_detected = await detect_business_rules(chunk_content, language)
+        rules_summary = (
+            "\n".join([f"Detected {rule['domain']} rule ({rule['source']}): {rule['description']}" for rule in rules_detected])
+            if rules_detected else ""
+        )
+        
+        # Build enhanced prompt with metadata
+        prompt = f"""Act as a senior business analyst reviewing a {language} source file segment.
 This is segment {chunk_index + 1} of a larger file. Generate concise business requirements in plain text, avoiding markdown symbols (*, -, #, **).
 Do NOT use the phrase "this chunk" or "this segment".
+
 The output MUST have five sections: Overview, Objective, Use Case, Key Functionalities, Workflow Summary, separated by two newlines.
-If the code contains organization-specific logic or calculations (e.g., proprietary formulas or business rules), generalize them without revealing sensitive details. For example, instead of specifying an exact calculation, say "performs proprietary calculations based on internal rules." Use the following detected rules for context:
-{rules_summary}
-Overview
-Describe the segment's role in the file's purpose and system context (50-100 words).
-Objective
-State the business goal or problem the segment addresses (1-2 sentences).
-Use Case
-Outline business scenarios where the segment's functionality is critical (2-3 sentences).
-Key Functionalities
-List 2-5 core business capabilities, each on a new line, numbered (e.g., 1., 2.), followed by a blank line. Each functionality must include a brief description.
-Workflow Summary
-Describe how the segment supports the file's business process (2-3 sentences).
+
+If the code contains organization-specific logic or calculations (e.g., proprietary formulas or business rules), generalize them without revealing sensitive details. For example, instead of specifying an exact calculation, say "performs proprietary calculations based on internal rules."
+
+Use the following detected rules for context:
+{rules_summary}"""
+
+        # Add context if available
+        if context_data.get('context'):
+            metadata = context_data.get('metadata', {})
+            related_files = context_data.get('related_files', [])
+            prompt += f"""
+
+Relevant Context from Similar Code:
+{context_data['context']}
+
+Context Metadata:
+- Total related files: {metadata.get('total_files', 0)}
+- Most relevant file: {related_files[0]['file_path'] if related_files else 'None'}"""
+
+        prompt += f"""
+
+Analyze this segment:
+```{language}
+{chunk_content}
+```
+
 Constraints:
 - Plain text, no markdown
 - Five non-empty sections
 - Key Functionalities numbered, each followed by a blank line
 - Use file summary and detected rules for context
 - Return only the structured requirements
-Analyze this segment:
-```{language}
-{chunk_content}
-```
+
+Generate the following sections:
+Overview
+Describe the segment's role in the file's purpose and system context (50-100 words).
+
+Objective
+State the business goal or problem the segment addresses (1-2 sentences).
+
+Use Case
+Outline business scenarios where the segment's functionality is critical (2-3 sentences).
+
+Key Functionalities
+List 2-5 core business capabilities, each on a new line, numbered (e.g., 1., 2.), followed by a blank line. Each functionality must include a brief description.
+
+Workflow Summary
+Describe how the segment supports the file's business process (2-3 sentences).
 """
-    async with llm_semaphore:
-        try:
-            async with asyncio.timeout(30):
-                with ThreadPoolExecutor(max_workers=1) as executor:
-                    result = await asyncio.get_event_loop().run_in_executor(
-                        executor, lambda: llm_config._llm.complete(prompt)
-                    )
-            req_text = result.text.strip()
-            with log_lock:
-                logger.debug(f"Raw LLM output for chunk {chunk_index + 1} (hash: {chunk_hash}): {req_text[:200]}...")
-
-            req_text = re.sub(r'\n\s*\n+', '\n\n', req_text)
-            req_text = re.sub(r'this chunk|this segment', 'the code', req_text, flags=re.IGNORECASE)
-            sections = re.split(r'\n\n(?=Overview|Objective|Use Case|Key Functionalities|Workflow Summary)', req_text)
-            section_dict = {}
-            for section in sections:
+        
+        async with llm_semaphore:
+            try:
+                async with asyncio.timeout(30):
+                    with ThreadPoolExecutor(max_workers=1) as executor:
+                        result = await asyncio.get_event_loop().run_in_executor(
+                            executor, lambda: llm_config._llm.complete(
+                                prompt=prompt,
+                                max_tokens=500,
+                                temperature=0.2
+                            )
+                        )
+                
+                req_text = result.text.strip()
+                with log_lock:
+                    logger.debug(f"Raw LLM output for chunk {chunk_index + 1} (hash: {chunk_hash}): {req_text[:200]}...")
+                
+                # Process and format the response
+                req_text = re.sub(r'\n\s*\n+', '\n\n', req_text)
+                req_text = re.sub(r'this chunk|this segment', 'the code', req_text, flags=re.IGNORECASE)
+                
+                # Split into sections
+                sections = re.split(r'\n\n(?=Overview|Objective|Use Case|Key Functionalities|Workflow Summary)', req_text)
+                section_dict = {}
+                
+                for section in sections:
+                    for header in ['Overview', 'Objective', 'Use Case', 'Key Functionalities', 'Workflow Summary']:
+                        if section.startswith(header):
+                            section_dict[header] = section[len(header):].strip()
+                            break
+                
+                # Ensure all sections exist
                 for header in ['Overview', 'Objective', 'Use Case', 'Key Functionalities', 'Workflow Summary']:
-                    if section.startswith(header):
-                        section_dict[header] = section[len(header):].strip()
-                        break
-
-            for header in ['Overview', 'Objective', 'Use Case', 'Key Functionalities', 'Workflow Summary']:
-                if header not in section_dict or not section_dict[header]:
-                    with log_lock:
-                        logger.warning(f"Missing or empty {header} in chunk {chunk_index + 1} (hash: {chunk_hash})")
-                    section_dict[header] = (
-                        f"Supports {language.lower()} file operations." if header == 'Overview' else
-                        f"To enable core {language.lower()} file functionality." if header == 'Objective' else
-                        f"Supports general business tasks in {language.lower()} applications." if header == 'Use Case' else
-                        "1. Basic Processing: Handles core tasks.\n\n2. Support Functions: Assists operations." if header == 'Key Functionalities' else
-                        f"Contributes to the {language.lower()} file's workflow."
-                    )
-
-            if section_dict['Key Functionalities']:
-                func_lines = section_dict['Key Functionalities'].split('\n')
-                formatted_funcs = []
-                for line in func_lines:
-                    if re.match(r'^\d+\.\s', line):
-                        formatted_funcs.append(line.strip())
-                if not formatted_funcs:
-                    formatted_funcs = ["1. Basic Processing: Handles core tasks.", "2. Support Functions: Assists operations."]
-                section_dict['Key Functionalities'] = '\n\n'.join(formatted_funcs)
-
-            output_sections = [
-                f"Overview\n{section_dict['Overview']}",
-                f"Objective\n{section_dict['Objective']}",
-                f"Use Case\n{section_dict['Use Case']}",
-                f"Key Functionalities\n{section_dict['Key Functionalities']}",
-                f"Workflow Summary\n{section_dict['Workflow Summary']}"
-            ]
-            joined = '\n\n'.join(output_sections)
-            lines = [l for l in joined.splitlines() if l.strip() and not l.strip().endswith(':')]
-            # Do NOT add generic lines. Only output what is relevant to the file content.
-            return joined
-
-            with log_lock:
-                logger.debug(f"Generated requirements for chunk {chunk_index + 1} (hash: {chunk_hash})")
-            return req_text
-        except asyncio.TimeoutError:
-            with log_lock:
-                logger.error(f"LLM timed out for chunk {chunk_index + 1} (hash: {chunk_hash})")
-            return (
-                f"Overview\nAnalysis limited due to timeout for {language.lower()} file operations.\n\n"
-                f"Objective\nTo support core {language.lower()} file functionality.\n\n"
-                f"Use Case\nSupports general {language.lower()} business tasks.\n\n"
-                f"Key Functionalities\n1. Partial Processing: Supports basic operations.\n\n2. Fallback Support: Provides minimal functionality.\n\n"
-                f"Workflow Summary\nContributes to {language.lower()} file workflow."
-            )
-        except Exception as e:
-            with log_lock:
-                logger.error(f"Error for chunk {chunk_index + 1}: {e}")
-            raise e
+                    if header not in section_dict or not section_dict[header]:
+                        with log_lock:
+                            logger.warning(f"Missing or empty {header} in chunk {chunk_index + 1} (hash: {chunk_hash})")
+                        section_dict[header] = (
+                            f"Supports {language.lower()} file operations." if header == 'Overview' else
+                            f"To enable core {language.lower()} file functionality." if header == 'Objective' else
+                            f"Supports general business tasks in {language.lower()} applications." if header == 'Use Case' else
+                            "1. Basic Processing: Handles core tasks.\n\n2. Support Functions: Assists operations." if header == 'Key Functionalities' else
+                            f"Contributes to the {language.lower()} file's workflow."
+                        )
+                
+                # Format Key Functionalities
+                if section_dict['Key Functionalities']:
+                    func_lines = section_dict['Key Functionalities'].split('\n')
+                    formatted_funcs = []
+                    for line in func_lines:
+                        if re.match(r'^\d+\.\s', line):
+                            formatted_funcs.append(line.strip())
+                    if not formatted_funcs:
+                        formatted_funcs = ["1. Basic Processing: Handles core tasks.", "2. Support Functions: Assists operations."]
+                    section_dict['Key Functionalities'] = '\n\n'.join(formatted_funcs)
+                
+                # Combine sections
+                output_sections = [
+                    f"Overview\n{section_dict['Overview']}",
+                    f"Objective\n{section_dict['Objective']}",
+                    f"Use Case\n{section_dict['Use Case']}",
+                    f"Key Functionalities\n{section_dict['Key Functionalities']}",
+                    f"Workflow Summary\n{section_dict['Workflow Summary']}"
+                ]
+                
+                return '\n\n'.join(output_sections)
+                
+            except asyncio.TimeoutError:
+                with log_lock:
+                    logger.error(f"LLM timed out for chunk {chunk_index + 1} (hash: {chunk_hash})")
+                return (
+                    f"Overview\nAnalysis limited due to timeout for {language.lower()} file operations.\n\n"
+                    f"Objective\nTo support core {language.lower()} file functionality.\n\n"
+                    f"Use Case\nSupports general {language.lower()} business tasks.\n\n"
+                    f"Key Functionalities\n1. Partial Processing: Supports basic operations.\n\n2. Fallback Support: Provides minimal functionality.\n\n"
+                    f"Workflow Summary\nContributes to {language.lower()} file workflow."
+                )
+            except Exception as e:
+                with log_lock:
+                    logger.error(f"Error for chunk {chunk_index + 1}: {e}")
+                raise e
+    except Exception as e:
+        with log_lock:
+            logger.error(f"Error in generate_requirements_for_chunk: {str(e)}")
+        return (
+            f"Overview\nError analyzing {language.lower()} code segment.\n\n"
+            f"Objective\nUnable to determine specific objectives.\n\n"
+            f"Use Case\nGeneral {language.lower()} file operations.\n\n"
+            f"Key Functionalities\n1. Basic Processing: Handles core tasks.\n\n2. Error Recovery: Provides fallback functionality.\n\n"
+            f"Workflow Summary\nSupports basic {language.lower()} file workflow."
+        )
 
 @retry_on_failure(max_attempts=2)
 async def extract_organization_specific_rules_for_chunk(chunk_content: str, chunk_index: int, language: str) -> str:
@@ -1107,7 +1217,7 @@ async def extract_organization_specific_rules(file_path: str, base_dir: str, lan
                     rules="Non-code file: Organization-specific rules extraction not applicable."
                 )
             language = language or "Plain Text"
-            async with aiofiles.open(file_path, mode='r', encoding='utf-8') as file:
+            async with aiofiles.open(file_path, mode='r', encoding='latin-1') as file:
                 content = await file.read()
 
         total_tokens = count_tokens(content)
@@ -1357,10 +1467,11 @@ Built on robust technical infrastructure supporting concurrent operations, error
         return "Summary generation encountered an unexpected issue.", []
 
 async def generate_requirements_for_file_whole(file_path: str, base_dir: str, language: str) -> FileRequirements:
+    """Generate requirements for a file with optimized RAG integration"""
     try:
         with log_lock:
             logger.debug(f"Processing file: {file_path}, Language: {language}")
-
+        
         _, ext = os.path.splitext(file_path)
         is_excel = ext.lower() in {'.xlsx', '.xlsm', '.xls', '.xlsb'}
         
@@ -1378,255 +1489,73 @@ async def generate_requirements_for_file_whole(file_path: str, base_dir: str, la
                     requirements="Non-code file: Requirements generation not applicable.",
                     dependencies=[]
                 )
-            language = language or "Plain Text"
-            async with aiofiles.open(file_path, mode='r', encoding='utf-8') as file:
-                content = await file.read()
+            
+            # Read file content with improved error handling
+            content = None
+            try:
+                async with aiofiles.open(file_path, 'r', encoding='utf-8') as f:
+                    content = await f.read()
+            except UnicodeDecodeError:
+                # Try alternative encodings efficiently
+                for encoding in ['latin-1', 'cp1252', 'iso-8859-1']:
+                    try:
+                        async with aiofiles.open(file_path, 'r', encoding=encoding) as f:
+                            content = await f.read()
+                        logger.warning(f"Successfully read {file_path} with {encoding} encoding")
+                        break
+                    except Exception:
+                        continue
+                
+                # Final fallback to binary mode
+                if content is None:
+                    try:
+                        async with aiofiles.open(file_path, 'rb') as f:
+                            raw_content = await f.read()
+                            content = raw_content.decode('latin-1', errors='replace')
+                        logger.warning(f"Read {file_path} in binary mode with error replacement")
+                    except Exception as e:
+                        logger.error(f"Failed to read {file_path}: {str(e)}")
+                        return _create_fallback_requirements(file_path, base_dir, language, "encoding error")
+            except Exception as e:
+                logger.error(f"Unexpected error reading {file_path}: {str(e)}")
+                return _create_fallback_requirements(file_path, base_dir, language, "file read error")
+        
+        if content is None:
+            return _create_fallback_requirements(file_path, base_dir, language, "could not decode file content")
 
+        # Count tokens and determine processing strategy
         total_tokens = count_tokens(content)
         with log_lock:
             logger.debug(f"File: {file_path}, Language: {language}, Size: {len(content)} bytes, Tokens: {total_tokens}")
-
-        from app.services.dependency_service import detect_dependencies
-        dependencies = await detect_dependencies(file_path, content, language, base_dir)
-        validated_dependencies = []
-        for dep in dependencies:
-            try:
-                validated_dep = FileDependency(**dep.dict())
-                validated_dependencies.append(validated_dep)
-            except ValidationError as ve:
-                with log_lock:
-                    logger.error(f"Invalid FileDependency for {file_path}: {dep.dict()}, Error: {ve}")
-
-        with log_lock:
-            logger.debug(f"Validated dependencies for {file_path}: {[dep.dict() for dep in validated_dependencies]}")
-        dep_lines = []
-        for dep in validated_dependencies:
-            dep_lines.append(dep.file_name)
-            dep_lines.append(dep.dependency_reason.replace('\n', ' '))
-        dep_text = "\\n".join(dep_lines) if dep_lines else "No dependencies detected."
-
+        
+        # Process RAG storage in background (non-blocking)
+        asyncio.create_task(_store_in_vector_db_async(content, file_path, language, base_dir))
+        
+        # Extract dependencies in parallel with requirements generation
+        dependencies_task = asyncio.create_task(_extract_dependencies_async(file_path, content, language, base_dir))
+        
+        # Generate requirements based on file size
         if total_tokens < 1000:
-            content_hash = _hash_content(content)
-            rules_detected = await detect_business_rules(content, language)
-            rules_summary = (
-                "\n".join([f"Detected {rule['domain']} rule ({rule['source']}): {rule['description']}" for rule in rules_detected])
-                if rules_detected else ""
-            )
-            if language.lower() in ['javascript', 'jsx', 'js']:
-                req_text = (
-                    f"Overview\nConfiguration file for {os.path.basename(file_path)} in a frontend application. {rules_summary}\n\n"
-                    f"Objective\nTo define settings or utilities for the application.\n\n"
-                    f"Use Case\nUsed during application initialization or runtime for UI setup.\n\n"
-                    f"Key Functionalities\n1. Configuration: Defines application settings.\n\n2. Utility Support: Provides helper functions.\n\n"
-                    f"Workflow Summary\nIntegrates with frontend framework for setup.\n\n"
-                    f"Dependent Files\n{dep_text}"
-                )
-            elif language.lower() in ["excel", "vba"]:
-                logic_summary = summarize_excel_vba_logic(content)
-                # Generate a business narrative summary from the extracted logic
-                business_narrative = await narrative_business_logic_summary(logic_summary, file_path)
-                # Format key_functionalities as numbered points with blank lines
-                key_functionalities = business_narrative['key_functionalities']
-                if isinstance(key_functionalities, list):
-                    formatted_key_funcs = [f"{i+1}. {func}" for i, func in enumerate(key_functionalities)]
-                    key_functionalities = "\n\n".join(formatted_key_funcs)
-                elif isinstance(key_functionalities, str) and key_functionalities.startswith("- "):
-                    # Handle fallback case where key_functionalities is a string with bullet points
-                    funcs = [f.strip("- ") for f in key_functionalities.split("\n") if f.strip().startswith("- ")]
-                    formatted_key_funcs = [f"{i+1}. {func}" for i, func in enumerate(funcs)]
-                    key_functionalities = "\n\n".join(formatted_key_funcs)
-                req_text = (
-                    f"Overview\n{business_narrative['overview']}\n\n"
-                    f"Objective\n{business_narrative['objective']}\n\n"
-                    f"Use Case\n{business_narrative['use_case']}\n\n"
-                    f"Key Functionalities\n{key_functionalities}\n\n"
-                    f"Workflow Summary\n{business_narrative['workflow']}\n\n"
-                    f"Dependent Files\n{dep_text}"
-                )
-            else:
-                req_text = (
-                    f"Overview\nUtility file for {os.path.basename(file_path)}. {rules_summary}\n\n"
-                    f"Objective\nTo provide supporting functions.\n\n"
-                    f"Use Case\nSupports general business operations.\n\n"
-                    f"Key Functionalities\n1. Basic Utilities: Provides helper functions.\n\n2. Support Functions: Assists operations.\n\n"
-                    f"Workflow Summary\nSupports general business workflow.\n\n"
-                    f"Dependent Files\n{dep_text}"
-                )
-            with log_lock:
-                logger.debug(f"Used small-file template for {file_path} (hash: {content_hash})")
-            return FileRequirements(
-                relative_path=os.path.relpath(file_path, base_dir),
-                file_name=os.path.basename(file_path),
-                requirements=req_text,
-                dependencies=validated_dependencies
-            )
-
-        if total_tokens <= MAX_SAFE_TOKENS:
-            if total_tokens > MAX_SAFE_TOKENS // 2:
-                content = content[:int(len(content) * MAX_SAFE_TOKENS * 0.3 / total_tokens)]
-                with log_lock:
-                    logger.warning(f"Truncated {file_path} to {len(content)} bytes")
-            rules_detected = await detect_business_rules(content, language)
-            rules_summary = (
-                "\n".join([f"Detected {rule['domain']} rule ({rule['source']}): {rule['description']}" for rule in rules_detected])
-                if rules_detected else ""
-            )
-            prompt = (
-                f"Act as a senior business analyst reviewing a {language} source file.\n"
-                f"Generate a comprehensive business requirements document in plain text, avoiding markdown symbols.\n"
-                f"Do NOT use the phrase 'this file' or 'this code'. "
-                f"If the content contains organization-specific logic or calculations (e.g., proprietary formulas or business rules), "
-                f"generalize them without revealing sensitive details. For example, instead of specifying an exact calculation, "
-                f"say 'performs proprietary calculations based on internal rules.'\n"
-                f"Use the following detected rules for context:\n{rules_summary}\n"
-                f"Provide exactly six sections: Overview, Objective, Use Case, Key Functionalities, Workflow Summary, and Dependent Files, "
-                f"separated by two newlines.\n\n"
-                f"Overview\nDescribe the file's purpose and role (50-100 words).\n\n"
-                f"Objective\nState the primary business goal (1-2 sentences).\n\n"
-                f"Use Case\nOutline business scenarios (2-3 sentences).\n\n"
-                f"Key Functionalities\nList 2-5 capabilities, each on a new line, numbered (e.g., 1., 2.), followed by a blank line.\n\n"
-                f"Workflow Summary\nDescribe the business process (2-3 sentences).\n\n"
-                f"Dependent Files\n{dep_text}\n\n"
-                f"Analyze:\n```{language}\n{content}\n```"
-            )
-
-            content_hash = _hash_content(content)
-            async with llm_semaphore:
-                try:
-                    async with asyncio.timeout(60):
-                        with ThreadPoolExecutor(max_workers=1) as executor:
-                            result = await asyncio.get_event_loop().run_in_executor(
-                                executor, lambda: llm_config._llm.complete(prompt)
-                            )
-                    req_text = result.text.strip()
-                    with log_lock:
-                        logger.debug(f"Raw LLM output for {file_path} (hash: {content_hash}): {req_text[:200]}...")
-
-                    req_text = re.sub(r'\n\s*\n+', '\n\n', req_text)
-                    req_text = re.sub(r'this file|this code', 'the content', req_text, flags=re.IGNORECASE)
-                    sections = re.split(r'\n\n(?=Overview|Objective|Use Case|Key Functionalities|Workflow Summary|Dependent Files)', req_text)
-                    section_dict = {}
-                    for section in sections:
-                        for header in ['Overview', 'Objective', 'Use Case', 'Key Functionalities', 'Workflow Summary', 'Dependent Files']:
-                            if section.startswith(header):
-                                section_dict[header] = section[len(header):].strip()
-                                break
-
-                    if len(section_dict) < 5 or not all(section_dict.get(h) for h in ['Overview', 'Objective', 'Use Case', 'Key Functionalities', 'Workflow Summary']):
-                        with log_lock:
-                            logger.warning(f"Invalid file requirements for {file_path}. Using fallback.")
-                        req_text = (
-                            f"Overview\nLimited analysis for {os.path.basename(file_path)}. {rules_summary}\n\n"
-                            f"Objective\nTo support core {language.lower()} business functions.\n\n"
-                            f"Use Case\nGeneral {language.lower()} business processes.\n\n"
-                            f"Key Functionalities\n1. Basic Processing: Performs core tasks.\n\n2. Support Functions: Assists operations.\n\n"
-                            f"Workflow Summary\nIntegrates with {language.lower()} system workflow.\n\n"
-                            f"Dependent Files\n{dep_text}"
-                        )
-                    else:
-                        if 'Key Functionalities' in section_dict:
-                            func_lines = section_dict['Key Functionalities'].split('\n')
-                            formatted_funcs = [line.strip() for line in func_lines if re.match(r'\d+\.\s', line)]
-                            if not formatted_funcs:
-                                formatted_funcs = ["1. Basic Processing: Supports core tasks.", "2. Support Functions: Assists operations."]
-                            section_dict['Key Functionalities'] = '\n\n'.join(formatted_funcs)
-                        req_text = (
-                            f"Overview\n{section_dict.get('Overview', 'Summary unavailable.')}. {rules_summary}\n\n"
-                            f"Objective\n{section_dict.get('Objective', 'To support core functionality.')}\n\n"
-                            f"Use Case\n{section_dict.get('Use Case', 'Supports business operations.')}\n\n"
-                            f"Key Functionalities\n{section_dict.get('Key Functionalities', '1. Basic Processing: Supports core tasks.\n\n2. Support Functions: Assists operations.')}\n\n"
-                            f"Workflow Summary\n{section_dict.get('Workflow Summary', 'Integrates with system workflow.')}\n\n"
-                            f"Dependent Files\n{dep_text}"
-                        )
-                except asyncio.TimeoutError:
-                    with log_lock:
-                        logger.error(f"LLM timed out for {file_path}")
-                    req_text = (
-                        f"Overview\nLimited analysis for {os.path.basename(file_path)} due to timeout. {rules_summary}\n\n"
-                        f"Objective\nTo support core {language.lower()} business functions.\n\n"
-                        f"Use Case\nGeneral {language.lower()} business processes.\n\n"
-                        f"Key Functionalities\n1. Partial Processing: Supports basic operations.\n\n2. Fallback: Provides minimal functionality.\n\n"
-                        f"Workflow Summary\nProcesses available data.\n\n"
-                        f"Dependent Files\n{dep_text}"
-                    )
-                except ValueError as ve:
-                    with log_lock:
-                        logger.error(f"Value error during LLM processing for {file_path}: {ve}")
-                    req_text = (
-                        f"Overview\nAnalysis failed for {os.path.basename(file_path)} due to invalid data. {rules_summary}\n\n"
-                        f"Objective\nTo support intended {language.lower()} business functions.\n\n"
-                        f"Use Case\nIntended {language.lower()} business operations.\n\n"
-                        f"Key Functionalities\n1. Intended Functionality: Expected to provide core features.\n\n2. Support Functions: Assists operations.\n\n"
-                        f"Workflow Summary\nExpected to integrate with {language.lower()} system workflows.\n\n"
-                        f"Dependent Files\n{dep_text}"
-                    )
-                except Exception as e:
-                    with log_lock:
-                        logger.error(f"Unexpected error during LLM processing for {file_path}: {e}")
-                    req_text = (
-                        f"Overview\nAnalysis failed for {os.path.basename(file_path)} due to processing error. {rules_summary}\n\n"
-                        f"Objective\nTo support intended {language.lower()} business functions.\n\n"
-                        f"Use Case\nIntended {language.lower()} business operations.\n\n"
-                        f"Key Functionalities\n1. Intended Functionality: Expected to provide core features.\n\n2. Support Functions: Assists operations.\n\n"
-                        f"Workflow Summary\nExpected to integrate with {language.lower()} system workflows.\n\n"
-                        f"Dependent Files\n{dep_text}"
-                    )
+            requirements_text = await _generate_small_file_requirements(content, file_path, language)
+        elif total_tokens <= MAX_SAFE_TOKENS:
+            requirements_text = await _generate_medium_file_requirements(content, file_path, language, total_tokens)
         else:
-            with log_lock:
-                logger.debug(f"Splitting {file_path} into chunks due to high token count: {total_tokens}")
-            try:
-                chunks = await split_into_chunks(content, language, file_path)
-                with log_lock:
-                    logger.debug(f"Generated {len(chunks)} chunks for {file_path}")
-                requirements_list = []
-                for i, (chunk_content, start_line, end_line) in enumerate(chunks):
-                    try:
-                        req = await generate_requirements_for_chunk(chunk_content, i, language)
-                        requirements_list.append(req)
-                        if (i + 1) % 5 == 0 or i + 1 == len(chunks):
-                            with log_lock:
-                                logger.info(f"Processed chunk {i+1}/{len(chunks)} for {file_path}")
-                    except Exception as e:
-                        with log_lock:
-                            logger.error(f"Error processing chunk {i+1} for {file_path}: {e}")
-                        requirements_list.append(
-                            f"Overview\nFailed to process chunk {i+1} of {os.path.basename(file_path)}.\n\n"
-                            f"Objective\nTo support chunk functionality.\n\n"
-                            f"Use Case\nGeneral chunk operations.\n\n"
-                            f"Key Functionalities\n1. Partial Processing: Supports chunk {i+1} operations.\n\n2. Fallback: Provides basic functionality.\n\n"
-                            f"Workflow Summary\nProcesses available chunk data."
-                        )
-                req_text = await combine_requirements(requirements_list, language)
-                req_text += f"\n\nDependent Files\n{dep_text}"
-            except MemoryError as me:
-                with log_lock:
-                    logger.error(f"Memory error during chunking for {file_path}: {me}")
-                req_text = (
-                    f"Overview\nFailed to process {os.path.basename(file_path)} due to memory constraints.\n\n"
-                    f"Objective\nTo support intended {language.lower()} business functions.\n\n"
-                    f"Use Case\nIntended {language.lower()} business operations.\n\n"
-                    f"Key Functionalities\n1. Intended Functionality: Expected to provide core features.\n\n2. Support Functions: Assists operations.\n\n"
-                    f"Workflow Summary\nExpected to integrate with {language.lower()} system workflows.\n\n"
-                    f"Dependent Files\n{dep_text}"
-                )
-            except Exception as e:
-                with log_lock:
-                    logger.error(f"Chunking failed for {file_path}: {str(e)}")
-                req_text = (
-                    f"Overview\nFailed to process {os.path.basename(file_path)} due to processing error.\n\n"
-                    f"Objective\nTo support intended {language.lower()} business functions.\n\n"
-                    f"Use Case\nIntended {language.lower()} business operations.\n\n"
-                    f"Key Functionalities\n1. Intended Functionality: Expected to provide core features.\n\n2. Support Functions: Assists operations.\n\n"
-                    f"Workflow Summary\nExpected to integrate with {language.lower()} system workflows.\n\n"
-                    f"Dependent Files\n{dep_text}"
-                )
-
+            requirements_text = await _generate_large_file_requirements(content, file_path, language, total_tokens)
+        
+        # Wait for dependencies to complete
+        dependencies = await dependencies_task
+        
+        # Add dependencies to requirements text
+        dep_text = _format_dependencies(dependencies)
+        requirements_text += f"\n\nDependent Files\n{dep_text}"
+        
         return FileRequirements(
             relative_path=os.path.relpath(file_path, base_dir),
             file_name=os.path.basename(file_path),
-            requirements=req_text,
-            dependencies=validated_dependencies
+            requirements=requirements_text,
+            dependencies=dependencies
         )
+        
     except Exception as e:
         with log_lock:
             logger.error(f"Error generating requirements for {file_path}: {str(e)}")
@@ -1637,16 +1566,325 @@ async def generate_requirements_for_file_whole(file_path: str, base_dir: str, la
             dependencies=[]
         )
 
-async def generate_requirements_for_files_whole(directory: str) -> FilesRequirements:
-    with log_lock:
-        logger.info(f"Starting requirements generation for {directory}")
+
+async def _store_in_vector_db_async(content: str, file_path: str, language: str, base_dir: str):
+    """Store content in vector database asynchronously without blocking main processing"""
     try:
+        # Only chunk if content is large enough to warrant it
+        if count_tokens(content) > 2000:
+            chunks = await split_into_chunks(content, language, file_path)
+        else:
+            # For smaller files, store as single chunk
+            chunks = [(content, 1, content.count('\n') + 1)]
+        
+        documents = []
+        for i, (chunk, start_line, end_line) in enumerate(chunks):
+            documents.append({
+                "content": chunk,
+                "metadata": {
+                    "file_path": file_path,
+                    "language": language,
+                    "start_line": start_line,
+                    "end_line": end_line,
+                    "base_dir": base_dir,
+                    "chunk_index": i
+                }
+            })
+        
+        # Store in vector database
+        await vector_store.add_documents(documents)
+        # Save only periodically or at the end to reduce I/O
+        if len(documents) > 10:  # Only save for larger document sets
+            vector_store.save(VECTOR_STORE_DIR)
+            
+    except Exception as e:
+        logger.error(f"Failed to store chunks in vector store for {file_path}: {str(e)}")
+
+
+async def _extract_dependencies_async(file_path: str, content: str, language: str, base_dir: str):
+    """Extract dependencies asynchronously"""
+    try:
+        from app.services.dependency_service import detect_dependencies
+        dependencies = await detect_dependencies(file_path, content, language, base_dir)
+        
+        validated_dependencies = []
+        for dep in dependencies:
+            try:
+                validated_dep = FileDependency(**dep.dict())
+                validated_dependencies.append(validated_dep)
+            except ValidationError as ve:
+                with log_lock:
+                    logger.error(f"Invalid FileDependency for {file_path}: {dep.dict()}, Error: {str(ve)}")
+        
+        with log_lock:
+            logger.debug(f"Validated dependencies for {file_path}: {[dep.dict() for dep in validated_dependencies]}")
+        
+        return validated_dependencies
+    except Exception as e:
+        logger.error(f"Error extracting dependencies for {file_path}: {str(e)}")
+        return []
+
+
+async def _generate_small_file_requirements(content: str, file_path: str, language: str) -> str:
+    """Generate requirements for small files using templates"""
+    content_hash = _hash_content(content)
+    rules_detected = await detect_business_rules(content, language)
+    rules_summary = (
+        "\n".join([f"Detected {rule['domain']} rule ({rule['source']}): {rule['description']}" 
+                  for rule in rules_detected])
+        if rules_detected else ""
+    )
+    
+    with log_lock:
+        logger.debug(f"Used small-file template for {file_path} (hash: {content_hash})")
+    
+    if language.lower() in ['javascript', 'jsx', 'js']:
+        return (
+            f"Overview\nConfiguration file for {os.path.basename(file_path)} in a frontend application. {rules_summary}\n\n"
+            f"Objective\nTo define settings or utilities for the application.\n\n"
+            f"Use Case\nUsed during application initialization or runtime for UI setup.\n\n"
+            f"Key Functionalities\n1. Configuration: Defines application settings.\n\n2. Utility Support: Provides helper functions.\n\n"
+            f"Workflow Summary\nIntegrates with frontend framework for setup."
+        )
+    elif language.lower() in ["excel", "vba"]:
+        # Enhanced VBA/Excel processing similar to first file
+        logic_summary = summarize_excel_vba_logic(content)
+        # Generate a business narrative summary from the extracted logic
+        business_narrative = await narrative_business_logic_summary(logic_summary, file_path)
+        
+        # Format key_functionalities as numbered points with blank lines
+        key_functionalities = business_narrative['key_functionalities']
+        if isinstance(key_functionalities, list):
+            formatted_key_funcs = [f"{i+1}. {func}" for i, func in enumerate(key_functionalities)]
+            key_functionalities = "\n\n".join(formatted_key_funcs)
+        elif isinstance(key_functionalities, str) and key_functionalities.startswith("- "):
+            # Handle fallback case where key_functionalities is a string with bullet points
+            funcs = [f.strip("- ") for f in key_functionalities.split("\n") if f.strip().startswith("- ")]
+            formatted_key_funcs = [f"{i+1}. {func}" for i, func in enumerate(funcs)]
+            key_functionalities = "\n\n".join(formatted_key_funcs)
+        
+        return (
+            f"Overview\n{business_narrative['overview']}\n\n"
+            f"Objective\n{business_narrative['objective']}\n\n"
+            f"Use Case\n{business_narrative['use_case']}\n\n"
+            f"Key Functionalities\n{key_functionalities}\n\n"
+            f"Workflow Summary\n{business_narrative['workflow']}"
+        )
+    else:
+        return (
+            f"Overview\nUtility file for {os.path.basename(file_path)}. {rules_summary}\n\n"
+            f"Objective\nTo provide supporting functions.\n\n"
+            f"Use Case\nSupports general business operations.\n\n"
+            f"Key Functionalities\n1. Basic Utilities: Provides helper functions.\n\n2. Support Functions: Assists operations.\n\n"
+            f"Workflow Summary\nSupports general business workflow."
+        )
+
+
+async def _generate_medium_file_requirements(content: str, file_path: str, language: str, total_tokens: int) -> str:
+    """Generate requirements for medium-sized files using LLM"""
+    # Truncate if necessary
+    if total_tokens > MAX_SAFE_TOKENS // 2:
+        content = content[:int(len(content) * MAX_SAFE_TOKENS * 0.3 / total_tokens)]
+        with log_lock:
+            logger.warning(f"Truncated {file_path} to {len(content)} bytes")
+    
+    rules_detected = await detect_business_rules(content, language)
+    rules_summary = (
+        "\n".join([f"Detected {rule['domain']} rule ({rule['source']}): {rule['description']}" 
+                  for rule in rules_detected])
+        if rules_detected else ""
+    )
+    
+    prompt = (
+        f"Act as a senior business analyst reviewing a {language} source file.\n"
+        f"Generate a comprehensive business requirements document in plain text, avoiding markdown symbols.\n"
+        f"Do NOT use the phrase 'this file' or 'this code'. "
+        f"If the content contains organization-specific logic or calculations (e.g., proprietary formulas or business rules), "
+        f"generalize them without revealing sensitive details. For example, instead of specifying an exact calculation, "
+        f"say 'performs proprietary calculations based on internal rules.'\n"
+        f"Use the following detected rules for context:\n{rules_summary}\n"
+        f"Provide exactly five sections: Overview, Objective, Use Case, Key Functionalities, and Workflow Summary, "
+        f"separated by two newlines.\n\n"
+        f"Overview\nDescribe the file's purpose and role (50-100 words).\n\n"
+        f"Objective\nState the primary business goal (1-2 sentences).\n\n"
+        f"Use Case\nOutline business scenarios (2-3 sentences).\n\n"
+        f"Key Functionalities\nList 2-5 capabilities, each on a new line, numbered (e.g., 1., 2.), followed by a blank line.\n\n"
+        f"Workflow Summary\nDescribe the business process (2-3 sentences).\n\n"
+        f"Analyze:\n```{language}\n{content}\n```"
+    )
+
+    content_hash = _hash_content(content)
+    async with llm_semaphore:
+        try:
+            async with asyncio.timeout(60):
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    result = await asyncio.get_event_loop().run_in_executor(
+                        executor, lambda: llm_config._llm.complete(prompt)
+                    )
+            
+            req_text = result.text.strip()
+            with log_lock:
+                logger.debug(f"Raw LLM output for {file_path} (hash: {content_hash}): {req_text[:200]}...")
+            
+            req_text = re.sub(r'\n\s*\n+', '\n\n', req_text)
+            req_text = re.sub(r'this file|this code', 'the content', req_text, flags=re.IGNORECASE)
+            
+            # Validate and format the response
+            return _validate_and_format_requirements(req_text, file_path, language, rules_summary)
+            
+        except asyncio.TimeoutError:
+            with log_lock:
+                logger.error(f"LLM timed out for {file_path}")
+            return _create_fallback_requirements_text(file_path, language, "timeout", rules_summary)
+        except ValueError as ve:
+            with log_lock:
+                logger.error(f"Value error during LLM processing for {file_path}: {ve}")
+            return _create_fallback_requirements_text(file_path, language, "invalid data", rules_summary)
+        except Exception as e:
+            with log_lock:
+                logger.error(f"Error during LLM processing for {file_path}: {e}")
+            return _create_fallback_requirements_text(file_path, language, "processing error", rules_summary)
+
+
+async def _generate_large_file_requirements(content: str, file_path: str, language: str, total_tokens: int) -> str:
+    """Generate requirements for large files using chunking strategy"""
+    try:
+        with log_lock:
+            logger.debug(f"Splitting {file_path} into chunks due to high token count: {total_tokens}")
+        chunks = await split_into_chunks(content, language, file_path)
+        with log_lock:
+            logger.debug(f"Generated {len(chunks)} chunks for {file_path}")
+        
+        requirements_list = []
+        for i, (chunk_content, start_line, end_line) in enumerate(chunks):
+            try:
+                req = await generate_requirements_for_chunk(chunk_content, i, language)
+                requirements_list.append(req)
+                if (i + 1) % 5 == 0 or i + 1 == len(chunks):
+                    with log_lock:
+                        logger.info(f"Processed chunk {i+1}/{len(chunks)} for {file_path}")
+            except Exception as e:
+                with log_lock:
+                    logger.error(f"Error processing chunk {i+1} for {file_path}: {e}")
+                requirements_list.append(_create_chunk_fallback(i + 1, file_path))
+        
+        # Combine all requirements
+        combined_req = await combine_requirements(requirements_list, language)
+        return combined_req
+        
+    except MemoryError as me:
+        with log_lock:
+            logger.error(f"Memory error during chunking for {file_path}: {me}")
+        return _create_fallback_requirements_text(file_path, language, "memory constraints", "")
+    except Exception as e:
+        with log_lock:
+            logger.error(f"Chunking failed for {file_path}: {str(e)}")
+        return _create_fallback_requirements_text(file_path, language, "processing error", "")
+
+
+# Helper functions
+def _create_fallback_requirements(file_path: str, base_dir: str, language: str, error_type: str) -> FileRequirements:
+    """Create fallback requirements when processing fails"""
+    req_text = (
+        f"Overview\nFailed to process {os.path.basename(file_path)} due to {error_type}.\n\n"
+        f"Objective\nTo support intended {language.lower()} business functions.\n\n"
+        f"Use Case\nIntended {language.lower()} business operations.\n\n"
+        f"Key Functionalities\n1. Intended Functionality: Expected to provide core features.\n\n2. Support Functions: Assists operations.\n\n"
+        f"Workflow Summary\nExpected to integrate with {language.lower()} system workflows.\n\n"
+        f"Dependent Files\nNo dependencies detected."
+    )
+    
+    return FileRequirements(
+        relative_path=os.path.relpath(file_path, base_dir),
+        file_name=os.path.basename(file_path),
+        requirements=req_text,
+        dependencies=[]
+    )
+
+
+def _create_fallback_requirements_text(file_path: str, language: str, error_type: str, rules_summary: str) -> str:
+    """Create fallback requirements text"""
+    return (
+        f"Overview\nLimited analysis for {os.path.basename(file_path)} due to {error_type}. {rules_summary}\n\n"
+        f"Objective\nTo support core {language.lower()} business functions.\n\n"
+        f"Use Case\nGeneral {language.lower()} business processes.\n\n"
+        f"Key Functionalities\n1. Basic Processing: Performs core tasks.\n\n2. Support Functions: Assists operations.\n\n"
+        f"Workflow Summary\nIntegrates with {language.lower()} system workflow."
+    )
+
+
+def _validate_and_format_requirements(req_text: str, file_path: str, language: str, rules_summary: str) -> str:
+    """Validate and format LLM-generated requirements"""
+    sections = re.split(r'\n\n(?=Overview|Objective|Use Case|Key Functionalities|Workflow Summary|Dependent Files)', req_text)
+    section_dict = {}
+    
+    for section in sections:
+        for header in ['Overview', 'Objective', 'Use Case', 'Key Functionalities', 'Workflow Summary', 'Dependent Files']:
+            if section.startswith(header):
+                section_dict[header] = section[len(header):].strip()
+                break
+
+    # Validate required sections
+    if len(section_dict) < 5 or not all(section_dict.get(h) for h in ['Overview', 'Objective', 'Use Case', 'Key Functionalities', 'Workflow Summary']):
+        with log_lock:
+            logger.warning(f"Invalid file requirements for {file_path}. Using fallback.")
+        return _create_fallback_requirements_text(file_path, language, "invalid format", rules_summary)
+    
+    # Format Key Functionalities properly
+    if 'Key Functionalities' in section_dict:
+        func_lines = section_dict['Key Functionalities'].split('\n')
+        formatted_funcs = [line.strip() for line in func_lines if re.match(r'\d+\.\s', line)]
+        if not formatted_funcs:
+            formatted_funcs = ["1. Basic Processing: Supports core tasks.", "2. Support Functions: Assists operations."]
+        section_dict['Key Functionalities'] = '\n\n'.join(formatted_funcs)
+    
+    return (
+        f"Overview\n{section_dict.get('Overview', 'Summary unavailable.')}. {rules_summary}\n\n"
+        f"Objective\n{section_dict.get('Objective', 'To support core functionality.')}\n\n"
+        f"Use Case\n{section_dict.get('Use Case', 'Supports business operations.')}\n\n"
+        f"Key Functionalities\n{section_dict.get('Key Functionalities', '1. Basic Processing: Supports core tasks.\n\n2. Support Functions: Assists operations.')}\n\n"
+        f"Workflow Summary\n{section_dict.get('Workflow Summary', 'Integrates with system workflow.')}"
+    )
+
+
+def _format_dependencies(dependencies: list) -> str:
+    """Format dependencies for display"""
+    if not dependencies:
+        return "No dependencies detected."
+    
+    dep_lines = []
+    for dep in dependencies:
+        dep_lines.append(dep.file_name)
+        dep_lines.append(dep.dependency_reason.replace('\n', ' '))
+    
+    return "\\n".join(dep_lines)
+
+
+def _create_chunk_fallback(chunk_num: int, file_path: str) -> str:
+    """Create fallback text for failed chunk processing"""
+    return (
+        f"Overview\nFailed to process chunk {chunk_num} of {os.path.basename(file_path)}.\n\n"
+        f"Objective\nTo support chunk functionality.\n\n"
+        f"Use Case\nGeneral chunk operations.\n\n"
+        f"Key Functionalities\n1. Partial Processing: Supports chunk {chunk_num} operations.\n\n2. Fallback: Provides basic functionality.\n\n"
+        f"Workflow Summary\nProcesses available chunk data."
+    )
+
+
+async def generate_requirements_for_files_whole(directory: str) -> FilesRequirements:
+    """Optimized batch processing of files"""
+    logger.info(f"Starting requirements generation for {directory}")
+    
+    try:
+        # Get all files to process
         code_files = get_code_files(directory)
         all_files = []
+        
         for root, _, files in os.walk(directory):
             for file in files:
                 file_path = os.path.join(root, file)
                 _, ext = os.path.splitext(file)
+                
                 if ext.lower() in {'.xlsx', '.xlsm', '.xls', '.xlsb'}:
                     language = "Excel" if ext.lower() == '.xlsx' else "VBA"
                     all_files.append((file_path, language))
@@ -1654,44 +1892,65 @@ async def generate_requirements_for_files_whole(directory: str) -> FilesRequirem
                     all_files.append((file_path, get_file_language(file_path)))
 
         total_files = len(all_files)
-        with log_lock:
-            logger.info(f"Found {total_files} files for requirements generation in {directory}")
+        logger.info(f"Found {total_files} files for requirements generation in {directory}")
 
         files_requirements = []
         completed_count = 0
 
-        file_batches = [all_files[i:i + BATCH_SIZE] for i in range(0, total_files, BATCH_SIZE)]
-        with ThreadPoolExecutor(max_workers=12) as executor:
-            loop = asyncio.get_event_loop()
-            for batch in file_batches:
-                tasks = [
-                    generate_requirements_for_file_whole(file_path, directory, language)
-                    for file_path, language in batch
-                ]
-                batch_results = await asyncio.gather(*tasks, return_exceptions=True)
-                for result in batch_results:
-                    if isinstance(result, Exception):
-                        with log_lock:
-                            logger.error(f"Error in batch processing: {result}")
-                    else:
-                        files_requirements.append(result)
-                completed_count += len(batch)
-                with log_lock:
-                    logger.info(f"Progress: {completed_count}/{total_files} files processed ({completed_count/total_files*100:.2f}%)")
+        # Process files in smaller batches with controlled concurrency
+        batch_size = min(BATCH_SIZE, 6)  # Limit batch size for better control
+        file_batches = [all_files[i:i + batch_size] for i in range(0, total_files, batch_size)]
+        
+        for batch_num, batch in enumerate(file_batches):
+            logger.info(f"Processing batch {batch_num + 1}/{len(file_batches)}")
+            
+            tasks = [
+                generate_requirements_for_file_whole(file_path, directory, language)
+                for file_path, language in batch
+            ]
+            
+            # Use asyncio.gather with return_exceptions to handle failures gracefully
+            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            for i, result in enumerate(batch_results):
+                if isinstance(result, Exception):
+                    logger.error(f"Error processing {batch[i][0]}: {result}")
+                    # Create fallback requirement
+                    file_path, language = batch[i]
+                    fallback = _create_fallback_requirements(file_path, directory, language, "processing error")
+                    files_requirements.append(fallback)
+                else:
+                    files_requirements.append(result)
+            
+            completed_count += len(batch)
+            progress = completed_count / total_files * 100
+            logger.info(f"Progress: {completed_count}/{total_files} files processed ({progress:.1f}%)")
+            
+            # Brief pause between batches to prevent overwhelming the system
+            if batch_num < len(file_batches) - 1:
+                await asyncio.sleep(0.1)
 
+        # Sort results by relative path
         files_requirements.sort(key=lambda x: x.relative_path)
         
+        # Create final object
         files_requirements_obj = FilesRequirements(files=files_requirements)
         
+        # Generate project summary and graphs
         project_summary, graphs = await generate_project_summary(files_requirements_obj)
-        
         files_requirements_obj.project_summary = project_summary
         files_requirements_obj.graphs = graphs
 
-        with log_lock:
-            logger.info(f"Completed requirements generation for {len(files_requirements)} files with project summary and {len(graphs)} graphs")
+        # Save vector store at the end
+        try:
+            vector_store.save(VECTOR_STORE_DIR)
+            logger.info("Vector store saved successfully")
+        except Exception as e:
+            logger.error(f"Failed to save vector store: {e}")
+
+        logger.info(f"Completed requirements generation for {len(files_requirements)} files with project summary and {len(graphs)} graphs")
         return files_requirements_obj
+        
     except Exception as e:
-        with log_lock:
-            logger.error(f"Error processing directory {directory}: {str(e)}")
+        logger.error(f"Error processing directory {directory}: {str(e)}")
         return FilesRequirements(files=[])

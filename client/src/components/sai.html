@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agentic AI Architecture</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            margin: 0;
+            font-size: 2.5em;
+            font-weight: 700;
+        }
+        
+        .header p {
+            margin: 10px 0 0 0;
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+        
+        .architecture {
+            padding: 40px;
+        }
+        
+        .layer {
+            margin-bottom: 30px;
+            border-radius: 15px;
+            padding: 25px;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .layer::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #ff6b6b, #4ecdc4, #45b7d1, #96ceb4, #feca57);
+        }
+        
+        .layer-title {
+            font-size: 1.4em;
+            font-weight: 700;
+            margin-bottom: 20px;
+            color: #2c3e50;
+            display: flex;
+            align-items: center;
+        }
+        
+        .layer-icon {
+            width: 30px;
+            height: 30px;
+            margin-right: 15px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+        
+        .client-layer {
+            background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 100%);
+        }
+        
+        .api-layer {
+            background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+        }
+        
+        .orchestration-layer {
+            background: linear-gradient(135deg, #d299c2 0%, #fef9d7 100%);
+        }
+        
+        .agent-layer {
+            background: linear-gradient(135deg, #89f7fe 0%, #66a6ff 100%);
+        }
+        
+        .service-layer {
+            background: linear-gradient(135deg, #fdbb2d 0%, #22c1c3 100%);
+        }
+        
+        .data-layer {
+            background: linear-gradient(135deg, #ee9ca7 0%, #ffdde1 100%);
+        }
+        
+        .components-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+        
+        .agent-groups {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 20px;
+        }
+        
+        .agent-group {
+            background: rgba(255,255,255,0.3);
+            border-radius: 12px;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .agent-group h4 {
+            margin: 0 0 15px 0;
+            color: #2c3e50;
+            font-size: 1.1em;
+            text-align: center;
+            font-weight: 600;
+        }
+        
+        .component {
+            background: rgba(255,255,255,0.8);
+            border-radius: 10px;
+            padding: 15px;
+            text-align: center;
+            transition: all 0.3s ease;
+            border: 2px solid transparent;
+            backdrop-filter: blur(10px);
+        }
+        
+        .component:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            border-color: #3498db;
+        }
+        
+        .agent-item {
+            background: rgba(255,255,255,0.9);
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 10px;
+            text-align: center;
+            font-size: 0.9em;
+            transition: all 0.3s ease;
+            border-left: 4px solid #3498db;
+        }
+        
+        .agent-item:hover {
+            background: rgba(255,255,255,1);
+            transform: translateX(5px);
+        }
+        
+        .component-title {
+            font-weight: 600;
+            color: #2c3e50;
+            margin-bottom: 8px;
+        }
+        
+        .component-desc {
+            font-size: 0.85em;
+            color: #7f8c8d;
+            line-height: 1.4;
+        }
+        
+        .flow-arrows {
+            display: flex;
+            justify-content: center;
+            margin: 20px 0;
+        }
+        
+        .arrow {
+            font-size: 2em;
+            color: #3498db;
+            animation: bounce 2s infinite;
+        }
+        
+        @keyframes bounce {
+            0%, 20%, 50%, 80%, 100% { transform: translateY(0); }
+            40% { transform: translateY(-10px); }
+            60% { transform: translateY(-5px); }
+        }
+        
+        .workflow-section {
+            margin-top: 40px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 15px;
+            padding: 30px;
+        }
+        
+        .workflow-title {
+            font-size: 1.8em;
+            font-weight: 700;
+            margin-bottom: 25px;
+            text-align: center;
+        }
+        
+        .workflow-phases {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        
+        .phase {
+            background: rgba(255,255,255,0.1);
+            border-radius: 12px;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .phase-title {
+            font-size: 1.2em;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: #ffd700;
+        }
+        
+        .phase-steps {
+            list-style: none;
+            padding: 0;
+        }
+        
+        .phase-steps li {
+            background: rgba(255,255,255,0.1);
+            margin-bottom: 8px;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 0.9em;
+        }
+        
+        .tech-stack {
+            margin-top: 30px;
+            text-align: center;
+        }
+        
+        .tech-items {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .tech-item {
+            background: rgba(255,255,255,0.2);
+            padding: 10px 20px;
+            border-radius: 25px;
+            font-size: 0.9em;
+            backdrop-filter: blur(10px);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 Agentic AI Code Analysis Platform</h1>
+            <p>Multi-Agent Architecture for Intelligent Code Reverse Engineering</p>
+        </div>
+        
+        <div class="architecture">
+            <!-- Client Layer -->
+            <div class="layer client-layer">
+                <div class="layer-title">
+                    <div class="layer-icon" style="background: #e74c3c;">1</div>
+                    Client Layer
+                </div>
+                <div class="components-grid">
+                    <div class="component">
+                        <div class="component-title">Web Dashboard</div>
+                        <div class="component-desc">React/Vue.js interface for project management and visualization</div>
+                    </div>
+                    <div class="component">
+                        <div class="component-title">REST API</div>
+                        <div class="component-desc">RESTful endpoints for external integrations</div>
+                    </div>
+                    <div class="component">
+                        <div class="component-title">CLI Tools</div>
+                        <div class="component-desc">Command-line interface for automation</div>
+                    </div>
+                    <div class="component">
+                        <div class="component-title">IDE Extensions</div>
+                        <div class="component-desc">VS Code, IntelliJ plugins</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="flow-arrows">
+                <div class="arrow">⬇️</div>
+            </div>
+            
+            <!-- API Gateway Layer -->
+            <div class="layer api-layer">
+                <div class="layer-title">
+                    <div class="layer-icon" style="background: #3498db;">2</div>
+                    API Gateway Layer
+                </div>
+                <div class="components-grid">
+                    <div class="component">
+                        <div class="component-title">FastAPI Router</div>
+                        <div class="component-desc">High-performance async API routing</div>
+                    </div>
+                    <div class="component">
+                        <div class="component-title">Authentication</div>
+                        <div class="component-desc">JWT-based security and user management</div>
+                    </div>
+                    <div class="component">
+                        <div class="component-title">Rate Limiting</div>
+                        <div class="component-desc">Request throttling and quota management</div>
+                    </div>
+                    <div class="component">
+                        <div class="component-title">Request Validation</div>
+                        <div class="component-desc">Input sanitization and schema validation</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="flow-arrows">
+                <div class="arrow">⬇️</div>
+            </div>
+            
+            <!-- Orchestration Layer -->
+            <div class="layer orchestration-layer">
+                <div class="layer-title">
+                    <div class="layer-icon" style="background: #9b59b6;">3</div>
+                    LangGraph Orchestration Layer
+                </div>
+                <div class="components-grid">
+                    <div class="component">
+                        <div class="component-title">Workflow Engine</div>
+                        <div class="component-desc">LangGraph state machine for agent coordination</div>
+                    </div>
+                    <div class="component">
+                        <div class="component-title">State Manager</div>
+                        <div class="component-desc">Global state management across agents</div>
+                    </div>
+                    <div class="component">
+                        <div class="component-title">Agent Scheduler</div>
+                        <div class="component-desc">Parallel processing and resource allocation</div>
+                    </div>
+                    <div class="component">
+                        <div class="component-title">Error Handler</div>
+                        <div class="component-desc">Fault tolerance and recovery mechanisms</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="flow-arrows">
+                <div class="arrow">⬇️</div>
+            </div>
+            
+            <!-- Agent Layer -->
+            <div class="layer agent-layer">
+                <div class="layer-title">
+                    <div class="layer-icon" style="background: #2ecc71;">4</div>
+                    Multi-Agent Intelligence Layer
+                </div>
+                <div class="agent-groups">
+                    <div class="agent-group">
+                        <h4>🔍 Core Agents</h4>
+                        <div class="agent-item">Orchestrator Agent</div>
+                        <div class="agent-item">File Discovery Agent</div>
+                        <div class="agent-item">Code Analysis Agent</div>
+                        <div class="agent-item">Dependency Mapping Agent</div>
+                        <div class="agent-item">Quality Assurance Agent</div>
+                    </div>
+                    <div class="agent-group">
+                        <h4>🎯 Specialist Agents</h4>
+                        <div class="agent-item">Excel/VBA Specialist</div>
+                        <div class="agent-item">Database Schema Agent</div>
+                        <div class="agent-item">Config File Parser</div>
+                        <div class="agent-item">Legacy Code Agent</div>
+                        <div class="agent-item">API Documentation Agent</div>
+                    </div>
+                    <div class="agent-group">
+                        <h4>🧠 Intelligence Agents</h4>
+                        <div class="agent-item">Context Retrieval Agent</div>
+                        <div class="agent-item">Business Logic Extractor</div>
+                        <div class="agent-item">Documentation Generator</div>
+                        <div class="agent-item">Requirement Analyzer</div>
+                        <div class="agent-item">Pattern Recognition Agent</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="flow-arrows">
+                <div class="arrow">⬇️</div>
+            </div>
+            
+            <!-- Service Layer -->
+            <div class="layer service-layer">
+                <div class="layer-title">
+                    <div class="layer-icon" style="background: #f39c12;">5</div>
+                    Core Services Layer
+                </div>
+                <div class="components-grid">
+                    <div class="component">
+                        <div class="component-title">LLM Service</div>
+                        <div class="component-desc">OpenAI GPT-4, Claude, or local models</div>
+                    </div>
+                    <div class="component">
+                        <div class="component-title">Vector Store Service</div>
+                        <div class="component-desc">Chroma, Pinecone, or Qdrant for embeddings</div>
+                    </div>
+                    <div class="component">
+                        <div class="component-title">File Processing Service</div>
+                        <div class="component-desc">Multi-format file parsing and extraction</div>
+                    </div>
+                    <div class="component">
+                        <div class="component-title">Analysis Engine</div>
+                        <div class="component-desc">AST parsing, static analysis, pattern matching</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="flow-arrows">
+                <div class="arrow">⬇️</div>
+            </div>
+            
+            <!-- Data Layer -->
+            <div class="layer data-layer">
+                <div class="layer-title">
+                    <div class="layer-icon" style="background: #e67e22;">6</div>
+                    Data & Storage Layer
+                </div>
+                <div class="components-grid">
+                    <div class="component">
+                        <div class="component-title">PostgreSQL</div>
+                        <div class="component-desc">Structured data, metadata, relationships</div>
+                    </div>
+                    <div class="component">
+                        <div class="component-title">Redis Cache</div>
+                        <div class="component-desc">Session data, temporary results, caching</div>
+                    </div>
+                    <div class="component">
+                        <div class="component-title">Vector Database</div>
+                        <div class="component-desc">Embeddings storage for RAG</div>
+                    </div>
+                    <div class="component">
+                        <div class="component-title">File Storage</div>
+                        <div class="component-desc">S3/MinIO for source files and artifacts</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Workflow Section -->
+            <div class="workflow-section">
+                <div class="workflow-title">🔄 Agent Workflow Phases</div>
+                <div class="workflow-phases">
+                    <div class="phase">
+                        <div class="phase-title">Phase 1: Discovery</div>
+                        <ul class="phase-steps">
+                            <li>File Discovery Agent scans directory</li>
+                            <li>Categorizes files by type and complexity</li>
+                            <li>Creates processing strategy</li>
+                            <li>Loads historical context</li>
+                        </ul>
+                    </div>
+                    <div class="phase">
+                        <div class="phase-title">Phase 2: Analysis</div>
+                        <ul class="phase-steps">
+                            <li>Parallel file processing</li>
+                            <li>Specialist agents handle specific formats</li>
+                            <li>Code analysis and pattern extraction</li>
+                            <li>Dependency mapping and relationships</li>
+                        </ul>
+                    </div>
+                    <div class="phase">
+                        <div class="phase-title">Phase 3: Intelligence</div>
+                        <ul class="phase-steps">
+                            <li>Business logic extraction</li>
+                            <li>Context-aware requirement generation</li>
+                            <li>Cross-file relationship analysis</li>
+                            <li>Quality validation and refinement</li>
+                        </ul>
+                    </div>
+                    <div class="phase">
+                        <div class="phase-title">Phase 4: Documentation</div>
+                        <ul class="phase-steps">
+                            <li>Comprehensive documentation generation</li>
+                            <li>Multiple format outputs</li>
+                            <li>Quality assurance and validation</li>
+                            <li>Final packaging and delivery</li>
+                        </ul>
+                    </div>
+                </div>
+                
+                <div class="tech-stack">
+                    <h3>🛠️ Technology Stack</h3>
+                    <div class="tech-items">
+                        <div class="tech-item">LangGraph</div>
+                        <div class="tech-item">FastAPI</div>
+                        <div class="tech-item">PostgreSQL</div>
+                        <div class="tech-item">Redis</div>
+                        <div class="tech-item">ChromaDB</div>
+                        <div class="tech-item">OpenAI GPT-4</div>
+                        <div class="tech-item">Docker</div>
+                        <div class="tech-item">Kubernetes</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
