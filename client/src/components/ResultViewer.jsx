@@ -560,7 +560,7 @@ export default function ResultViewer() {
                         {/* Scrollable Content */}
                         <div className="flex-1 overflow-y-auto p-4">
                             {/* Project Summary Button */}
-                            <div className="mb-4">
+                            <div className="mb-4 flex flex-col gap-3">
                                 <button
                                     onClick={handleShowProjectSummary}
                                     className={`w-full flex items-center px-4 py-3 rounded-lg transition-all duration-200 font-medium text-left ${
@@ -571,6 +571,13 @@ export default function ResultViewer() {
                                 >
                                     <BookOpen className="w-5 h-5 mr-3 flex-shrink-0" />
                                     <span>Project Summary</span>
+                                </button>
+                                <button
+                                    onClick={() => alert('Project Visualization feature coming soon!')}
+                                    className="w-full flex items-center px-4 py-3 rounded-lg transition-all duration-200 font-medium text-left bg-teal-50 hover:bg-teal-100 text-teal-700 border-2 border-transparent hover:border-teal-200"
+                                >
+                                    <BarChart3 className="w-5 h-5 mr-3 flex-shrink-0" />
+                                    <span>Project Visualization</span>
                                 </button>
                             </div>
 
