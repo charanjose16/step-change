@@ -265,3 +265,41 @@ async def get_all_graphs(payload: GraphAllRequest):
  
 async def retrieve_file_content(requirement):
     return requirement
+
+from fastapi import Body
+from app.utils.file_utils import analyze_project_dependencies
+
+class ProjectGraphRequest(BaseModel):
+    folder_name: str
+
+    @validator("folder_name")
+    def validate_folder_name(cls, value):
+        if not re.match(r'^[\w\-/]+/?$', value):
+            raise ValueError("Invalid folder name. Use alphanumeric characters, slashes, hyphens, or underscores.")
+        return value
+
+@router.post("/project-graph", summary="Generate a unified D3 hierarchical graph of the full project")
+async def project_graph(data: ProjectGraphRequest = Body(...)):
+    folder_name = data.folder_name
+    # Download and extract S3 folder
+    try:
+        directory = await download_s3_folder(folder_name)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Error downloading S3 folder: {str(e)}"
+        )
+    # Build unified hierarchical project graph
+    from app.utils.file_utils import build_project_graph
+    from .analysis import clean_folder_name
+    try:
+        root_name = clean_folder_name(folder_name)
+        graph = build_project_graph(directory, root_name=root_name)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error building project graph: {str(e)}"
+        )
+    # Optionally clean up the temp dir in background
+    # background_tasks.add_task(cleanup_temp_dir, directory)
+    return {"success": True, "graph": graph}

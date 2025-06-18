@@ -82,7 +82,7 @@ export default function Dashboard() {
     }
   };
 
-  const isValidFolderName = (name) => /^[\w\-/\.]+\/?$/.test(name) && name.trim().length > 0;
+  const isValidFolderName = (name) => /^[\w\-/.]+\/?$/.test(name) && name.trim().length > 0;
 
   const generateQuickStats = (data) => {
     if (!data || !data.requirements) return;
@@ -159,8 +159,15 @@ export default function Dashboard() {
       setLoadingProgress(100);
       
       setTimeout(() => {
-        setResult(res.data);
-        localStorage.setItem("requirementsOutput", JSON.stringify(res.data));
+        // Patch: Always store the original S3 folder name and local path in the result object
+        let localPath = res.data.local_path;
+        if (!localPath) {
+          // If backend doesn't return it, construct it (update this logic as needed)
+          localPath = `/tmp/${folderName}`;
+        }
+        const resultWithFolderName = { ...res.data, folder_name: folderName, local_path: localPath };
+        setResult(resultWithFolderName);
+        localStorage.setItem("requirementsOutput", JSON.stringify(resultWithFolderName));
         setAnalysisComplete(true);
         generateQuickStats(res.data);
         saveToHistory(folderName, res.data);
@@ -168,7 +175,7 @@ export default function Dashboard() {
       }, 500);
       
     } catch (err) {
-      setError("Failed to analyze codebase. Please check the folder path and try again.");
+      setError("Failed to analyze codebase. Please check the folder path and try again.",err);
       setLoading(false);
     }
   };

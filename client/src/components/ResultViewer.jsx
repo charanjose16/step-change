@@ -10,6 +10,7 @@ import MermaidGraph from './MermaidGraph';
 const GraphDropdown = ({ summaryGraphResponses, loadingSummaryGraphs, summaryGraphError, onFullscreen }) => {
   const [selectedGraphIndex, setSelectedGraphIndex] = useState(0);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  
 
   if (loadingSummaryGraphs) {
     return (
@@ -236,7 +237,7 @@ const ProjectSummaryDisplay = ({ projectSummary, loadingSummary, summaryGraphRes
         
         {sections ? (
           <div className="space-y-4">
-            {sections.map((section, index) => (
+            {sections.map((section, ) => (
               <div key={section.key} className="border-l-4 border-teal-200 pl-4">
                 <div className="flex items-center space-x-3 mb-2">
                   <div className="text-teal-600">
@@ -270,8 +271,12 @@ const ProjectSummaryDisplay = ({ projectSummary, loadingSummary, summaryGraphRes
   );
 };
 
+import ProjectVisualizationModal from './ProjectVisualizationModal';
+
+
 export default function ResultViewer() {
     const [loadedRequirements, setLoadedRequirements] = useState(null);
+    const [showProjectGraphModal, setShowProjectGraphModal] = useState(false);
     const [loadError, setLoadError] = useState("");
     const [selectedRequirement, setSelectedRequirement] = useState(null);
     const [showProjectSummary, setShowProjectSummary] = useState(false);
@@ -287,10 +292,13 @@ export default function ResultViewer() {
     const [loadingSummaryGraphs, setLoadingSummaryGraphs] = useState(false);
     const [summaryGraphError, setSummaryGraphError] = useState("");
     const [isRightSectionFullscreen, setIsRightSectionFullscreen] = useState(false);
+
     const location = useLocation();
     const navigate = useNavigate();
     const result = location.state?.result;
     const initialSelectedRequirement = location.state?.selectedRequirement;
+
+
 
     useEffect(() => {
         if (!result) {
@@ -513,6 +521,10 @@ export default function ResultViewer() {
         setSelectedRequirement(null);
         setShowProjectSummary(true);
     };
+    
+function handleShowProjectVisualization() {
+  setShowProjectGraphModal(true);
+}
 
     const handleClearSelection = () => {
         setSelectedRequirement(null);
@@ -573,7 +585,7 @@ export default function ResultViewer() {
                                     <span>Project Summary</span>
                                 </button>
                                 <button
-                                    onClick={() => alert('Project Visualization feature coming soon!')}
+                                    onClick={handleShowProjectVisualization}
                                     className="w-full flex items-center px-4 py-3 rounded-lg transition-all duration-200 font-medium text-left bg-teal-50 hover:bg-teal-100 text-teal-700 border-2 border-transparent hover:border-teal-200"
                                 >
                                     <BarChart3 className="w-5 h-5 mr-3 flex-shrink-0" />
@@ -709,6 +721,7 @@ export default function ResultViewer() {
                                             <BookOpen className="w-5 h-5 mr-2" />
                                             View Project Summary
                                         </button>
+                                        
                                     </div>
                                 </div>
                             </div>
@@ -722,6 +735,12 @@ export default function ResultViewer() {
     return (
         <div className="h-screen overflow-hidden bg-gray-50">
             {content}
+            {/* Project Visualization Modal */}
+            <ProjectVisualizationModal
+                show={showProjectGraphModal}
+                onClose={() => setShowProjectGraphModal(false)}
+                folderName={result?.folder_name || (JSON.parse(localStorage.getItem('requirementsOutput'))?.folder_name)}
+            />
             {isFullScreen && fullScreenChart && (
                 <FullScreenGraph
                     chart={fullScreenChart}
