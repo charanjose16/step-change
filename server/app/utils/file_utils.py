@@ -127,14 +127,22 @@ def get_code_files(directory: str) -> List[Tuple[str, str]]:
             
             if should_ignore(full_path):
                 continue
-            
+            # Exclude CSS files
+            if file.lower().endswith('.css'):
+                continue
+            # Only include code and specified non-code files
+            allowed_exts = [
+                '.py', '.js', '.jsx', '.ts', '.tsx', '.java', '.scala', '.rb', '.go', '.cpp', '.c', '.rs', '.kt', '.swift', '.php',
+                '.cs', '.vb', '.fs', '.csproj', '.vbproj', '.fsproj', '.sln',
+                '.json', '.txt', '.xlsx', '.xlsm', '.doc', '.md'
+            ]
+            if not any(file.lower().endswith(ext) for ext in allowed_exts):
+                continue
             try:
                 with open(full_path, 'r', encoding='utf-8') as f:
                     f.read(1024)
-                
                 language = get_file_language(full_path)
                 code_files.append((full_path, language))
-            
             except (UnicodeDecodeError, IOError):
                 continue
     

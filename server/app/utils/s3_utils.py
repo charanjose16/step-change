@@ -36,26 +36,28 @@ async def download_s3_folder(folder_name: str) -> str:
     folder_name = folder_name.rstrip('/') + '/'
     
     try:
-        # List objects in the S3 folder
-        response = s3_client.list_objects_v2(Bucket=settings.bucket_name, Prefix=folder_name)
-        if 'Contents' not in response or not response['Contents']:
+        # List and download all objects in the S3 folder using paginator (handles >1000 files and deep hierarchy)
+        paginator = s3_client.get_paginator('list_objects_v2')
+        found_any = False
+        for page in paginator.paginate(Bucket=settings.bucket_name, Prefix=folder_name):
+            if 'Contents' not in page or not page['Contents']:
+                continue
+            for obj in page['Contents']:
+                s3_key = obj['Key']
+                if s3_key.endswith('/'):
+                    continue  # Skip directory entries
+                found_any = True
+                local_path = os.path.join(temp_dir, s3_key[len(folder_name):])
+                os.makedirs(os.path.dirname(local_path), exist_ok=True)
+                with log_lock:
+                    logger.debug(f"Downloading S3 object: {s3_key} to {local_path}")
+                s3_client.download_file(settings.bucket_name, s3_key, local_path)
+        if not found_any:
             shutil.rmtree(temp_dir, ignore_errors=True)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"No files found in S3 folder: {folder_name}"
             )
-
-        # Download each file
-        for obj in response['Contents']:
-            s3_key = obj['Key']
-            if s3_key.endswith('/'):  # Skip directory entries
-                continue
-            local_path = os.path.join(temp_dir, s3_key[len(folder_name):])
-            os.makedirs(os.path.dirname(local_path), exist_ok=True)
-            
-            with log_lock:
-                logger.debug(f"Downloading S3 object: {s3_key} to {local_path}")
-            s3_client.download_file(settings.bucket_name, s3_key, local_path)
 
         # If the folder contains a ZIP file, extract it
         zip_files = [f for f in os.listdir(temp_dir) if f.endswith('.zip')]

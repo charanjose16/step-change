@@ -937,14 +937,16 @@ async def combine_requirements(requirements_list: List[str], language: str) -> s
 
     max_funcs = 10
     functionalities = functionalities[:max_funcs]
-    if not functionalities:
-        functionalities = ["1. Basic Functionality: Supports core operations.", "2. Support Functions: Assists business tasks."]
+    functionalities_section = ''
+    if functionalities:
+        functionalities_section = f"Key Functionalities\n{'\n\n'.join(functionalities)}\n\n"
+    # else: leave functionalities_section empty (or optionally: functionalities_section = 'Key Functionalities\nNo explicit functionalities detected.\n\n')
 
     combined = (
         f"Overview\n{overview}\n\n"
         f"Objective\n{objective}\n\n"
         f"Use Case\n{use_case}\n\n"
-        f"Key Functionalities\n{'\n\n'.join(functionalities)}\n\n"
+        f"{functionalities_section}"
         f"Workflow Summary\n{workflow}"
     )
 
