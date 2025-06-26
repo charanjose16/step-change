@@ -1,4 +1,3 @@
-// Enhanced Dashboard component with improved loading indicators
 import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "../api/axiosConfig";
@@ -9,6 +8,7 @@ import {
   Star, Activity, Loader2
 } from 'lucide-react';
 import { jsPDF } from "jspdf";
+import autoTable from 'jspdf-autotable';
 
 export default function Dashboard() {
   // State management
@@ -175,7 +175,7 @@ export default function Dashboard() {
       }, 500);
       
     } catch (err) {
-      setError("Failed to analyze codebase. Please check the folder path and try again.",err);
+      setError("Failed to analyze codebase. Please check the folder path and try again.");
       setLoading(false);
     }
   };
@@ -196,49 +196,300 @@ export default function Dashboard() {
   };
 
   // Export functions
-  const downloadPDF = () => {
-    if (!result || !result.requirements || !result.requirements.length) return;
-    
-    const doc = new jsPDF();
-    
-    // Enhanced PDF with better formatting
-    doc.setFontSize(20);
-    doc.text("Business Logic Analysis Report", 20, 30);
-    
-    doc.setFontSize(12);
-    doc.text(`Generated on: ${new Date().toLocaleString()}`, 20, 45);
-    doc.text(`Folder: ${folderName}`, 20, 55);
-    doc.text(`Total Files: ${result.requirements.length}`, 20, 65);
-    
-    if (quickStats) {
-      doc.text(`Languages: ${quickStats.languages.join(', ')}`, 20, 75);
-    }
-    
-    let yPosition = 90;
-    
-    result.requirements.forEach((file, i) => {
-      if (yPosition > 250) {
-        doc.addPage();
-        yPosition = 30;
-      }
-      
-      doc.setFontSize(14);
-      doc.text(`${i + 1}. ${file.file_name}`, 20, yPosition);
-      yPosition += 10;
-      
-      doc.setFontSize(10);
-      doc.text(`Path: ${file.relative_path}`, 25, yPosition);
-      yPosition += 10;
-      
-      const requirements = file.requirements || "No requirements found.";
-      const lines = doc.splitTextToSize(requirements, 170);
-      doc.text(lines, 25, yPosition);
-      yPosition += lines.length * 5 + 15;
-    });
-    
-    doc.save(`CodebaseAnalysisReport_${new Date().toISOString().split('T')[0]}.pdf`);
-  };
+// Enhanced downloadPDF function with professional styling
+// Enhanced downloadPDF function with professional styling
+const downloadPDF = () => {
+  if (!result || !result.requirements || !result.requirements.length) return;
+  
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4',
+  });
 
+  // Set document properties
+  doc.setProperties({
+    title: `Codebase Analysis Report - ${folderName}`,
+    author: 'App Discovery & Knowledge Management',
+    creator: 'App Discovery System'
+  });
+
+  // Define margins and styles
+  const marginLeft = 15;
+  const marginTop = 20;
+  const pageWidth = 210; // A4 width in mm
+  const pageHeight = 297; // A4 height in mm
+  const maxWidth = pageWidth - 2 * marginLeft;
+  const footerY = pageHeight - 15; // Footer position from bottom
+
+  // Color definitions
+  const tealColor = [0, 128, 128]; // RGB for teal-700
+  const blackColor = [0, 0, 0]; // RGB for black text
+  const grayColor = [75, 85, 99]; // RGB for gray-600
+
+  // Header
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(20);
+  doc.setTextColor(...tealColor);
+  doc.text('Business Logic Analysis Report', marginLeft, marginTop);
+  
+  // Draw header underline
+  doc.setLineWidth(0.5);
+  doc.setDrawColor(...tealColor);
+  doc.line(marginLeft, marginTop + 2, pageWidth - marginLeft, marginTop + 2);
+  
+  // Draw document border
+  doc.setLineWidth(0.3);
+  doc.setDrawColor(...grayColor);
+  doc.rect(10, 10, pageWidth - 20, pageHeight - 20, 'S'); // Border around content
+  
+  // Metadata
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(12);
+  doc.setTextColor(...grayColor);
+  const metadata = [
+    `Generated on: ${new Date().toLocaleString()}`,
+    `Folder: ${folderName}`,
+    `Total Files: ${result.requirements.length}`,
+    quickStats ? `Languages: ${quickStats.languages?.join(', ') || 'N/A'}` : ''
+  ];
+  
+  let yPosition = marginTop + 15;
+  metadata.forEach(line => {
+    if (line) {
+      doc.text(line, marginLeft, yPosition);
+      yPosition += 8;
+    }
+  });
+
+  // Add summary table with border
+  yPosition += 10;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(14);
+  doc.setTextColor(...tealColor);
+  doc.text('Summary', marginLeft, yPosition);
+  yPosition += 8;
+
+  const summaryData = [
+    ['Total Files', result.requirements.length],
+    ['Languages Detected', quickStats ? quickStats.languages?.join(', ') || 'N/A' : 'N/A'],
+    ['Last Analyzed', quickStats ? quickStats.lastAnalyzed : 'N/A']
+  ];
+
+  autoTable(doc, {
+    startY: yPosition,
+    head: [['Metric', 'Value']],
+    body: summaryData,
+    theme: 'grid',
+    styles: {
+      font: 'helvetica',
+      fontSize: 10,
+      cellPadding: 3,
+      textColor: [75, 85, 99], // Gray-600 for content
+      lineColor: [200, 200, 200],
+      lineWidth: 0.2
+    },
+    headStyles: {
+      fillColor: tealColor,
+      textColor: [255, 255, 255],
+      fontStyle: 'bold'
+    },
+    margin: { left: marginLeft, right: marginLeft },
+    tableLineColor: [75, 85, 99], // Gray-600 for table border
+    tableLineWidth: 0.3
+  });
+
+  yPosition = doc.lastAutoTable.finalY + 15;
+
+  // File Analysis Section
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(14);
+  doc.setTextColor(...tealColor);
+  doc.text('File Analysis', marginLeft, yPosition);
+  yPosition += 8;
+
+  result.requirements.forEach((file, index) => {
+    // Start new page for each file (but check if content fits)
+    if (index > 0 || yPosition > 250) { // Changed from marginTop to 250 to leave space for footer
+      doc.addPage();
+      yPosition = marginTop;
+      // Draw border on new page
+      doc.setLineWidth(0.3);
+      doc.setDrawColor(...grayColor);
+      doc.rect(10, 10, pageWidth - 20, pageHeight - 20, 'S');
+    }
+
+    // File header
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(12);
+    doc.setTextColor(...tealColor);
+    doc.text(`${index + 1}. ${file.file_name}`, marginLeft, yPosition);
+    yPosition += 8;
+
+    // File path
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    doc.setTextColor(...grayColor);
+    doc.text(`Path: ${file.relative_path || 'N/A'}`, marginLeft + 5, yPosition);
+    yPosition += 8;
+
+    // Requirements section with proper formatting
+    if (file.requirements) {
+      // Parse the requirements text to identify sections
+      const requirementsText = file.requirements;
+      const lines = requirementsText.split('\n');
+      
+      lines.forEach(line => {
+        // Check if we need a new page - leave more space for footer
+        if (yPosition > 250) { // Changed from 270 to 250
+          doc.addPage();
+          yPosition = marginTop;
+          // Draw border on new page
+          doc.setLineWidth(0.3);
+          doc.setDrawColor(...grayColor);
+          doc.rect(10, 10, pageWidth - 20, pageHeight - 20, 'S');
+        }
+
+        const trimmedLine = line.trim();
+        
+        if (trimmedLine) {
+          // Check if line contains keywords that should be bold and teal
+          const keywords = ['Overview', 'Objective', 'Use Case', 'Purpose', 'Description', 'Functionality', 'Features', 'Requirements', 'Key Functionalities', 'Workflow Summary', 'Dependent Files'];
+          const isKeywordLine = keywords.some(keyword => 
+            trimmedLine.startsWith(keyword) || 
+            trimmedLine.includes(`${keyword}:`) ||
+            trimmedLine.includes(`${keyword} `)
+          );
+
+          if (isKeywordLine) {
+            // Split the line into keyword and content
+            let keywordPart = '';
+            let contentPart = '';
+            
+            for (const keyword of keywords) {
+              if (trimmedLine.startsWith(keyword)) {
+                const colonIndex = trimmedLine.indexOf(':');
+                if (colonIndex !== -1) {
+                  keywordPart = trimmedLine.substring(0, colonIndex + 1);
+                  contentPart = trimmedLine.substring(colonIndex + 1).trim();
+                } else {
+                  keywordPart = keyword;
+                  contentPart = trimmedLine.substring(keyword.length).trim();
+                }
+                break;
+              }
+            }
+
+            // Print keyword in bold teal
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(11);
+            doc.setTextColor(...tealColor);
+            const keywordWidth = doc.getTextWidth(keywordPart);
+            doc.text(keywordPart, marginLeft + 5, yPosition);
+
+            // Print content in normal gray
+            if (contentPart) {
+              doc.setFont('helvetica', 'normal');
+              doc.setFontSize(10);
+              doc.setTextColor(...grayColor);
+              
+              // Split content into multiple lines if needed
+              const contentLines = doc.splitTextToSize(contentPart, maxWidth - 10 - keywordWidth - 5);
+              doc.text(contentLines[0], marginLeft + 5 + keywordWidth + 3, yPosition);
+              
+              // Handle additional lines
+              for (let i = 1; i < contentLines.length; i++) {
+                yPosition += 5;
+                if (yPosition > 250) { // Changed from 270 to 250
+                  doc.addPage();
+                  yPosition = marginTop;
+                  // Draw border on new page
+                  doc.setLineWidth(0.3);
+                  doc.setDrawColor(...grayColor);
+                  doc.rect(10, 10, pageWidth - 20, pageHeight - 20, 'S');
+                }
+                doc.text(contentLines[i], marginLeft + 5, yPosition);
+              }
+            }
+          } else {
+            // Regular content line
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(10);
+            doc.setTextColor(...grayColor);
+            
+            const textLines = doc.splitTextToSize(trimmedLine, maxWidth - 10);
+            textLines.forEach((textLine, lineIndex) => {
+              if (yPosition > 250) { // Changed from 270 to 250
+                doc.addPage();
+                yPosition = marginTop;
+                // Draw border on new page
+                doc.setLineWidth(0.3);
+                doc.setDrawColor(...grayColor);
+                doc.rect(10, 10, pageWidth - 20, pageHeight - 20, 'S');
+              }
+              doc.text(textLine, marginLeft + 5, yPosition);
+              if (lineIndex < textLines.length - 1) yPosition += 5;
+            });
+          }
+          
+          yPosition += 6;
+        } else {
+          yPosition += 3; // Small space for empty lines
+        }
+      });
+    } else {
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(10);
+      doc.setTextColor(...grayColor);
+      doc.text('No requirements found', marginLeft + 5, yPosition);
+      yPosition += 6;
+    }
+
+    yPosition += 10; // Space between sections
+  });
+
+  // Footer with professional styling - FIXED VERSION
+  const pageCount = doc.internal.getNumberOfPages();
+  const currentDate = new Date().toLocaleDateString();
+  
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    
+    // Set footer styling
+    doc.setFontSize(9);
+    doc.setTextColor(100, 100, 100);
+    doc.setFont('helvetica', 'normal');
+    
+    // Company footer (left)
+    doc.text(
+      'App Discovery & Knowledge Management System',
+      marginLeft,
+      footerY
+    );
+    
+    // Date (center) - calculate center position
+    const dateText = `Generated: ${currentDate}`;
+    const dateWidth = doc.getTextWidth(dateText);
+    doc.text(
+      dateText,
+      (pageWidth - dateWidth) / 2,
+      footerY
+    );
+    
+    // Page number (right) - calculate right alignment
+    const pageText = `Page ${i} of ${pageCount}`;
+    const pageWidth_text = doc.getTextWidth(pageText);
+    doc.text(
+      pageText,
+      pageWidth - marginLeft - pageWidth_text,
+      footerY
+    );
+  }
+
+  // Save the PDF with timestamp
+  const timestamp = new Date().toISOString().split('T')[0];
+  doc.save(`CodebaseAnalysis_${folderName.replace(/[/\\:*?"<>|]/g, '_')}_${timestamp}.pdf`);
+};
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
       <Navbar />
@@ -314,7 +565,7 @@ export default function Dashboard() {
                       key={i}
                       className="w-2 h-2 bg-teal-500 rounded-full animate-bounce"
                       style={{ animationDelay: `${i * 0.2}s` }}
-                    ></div>
+                    />
                   ))}
                 </div>
               </div>
@@ -440,7 +691,7 @@ export default function Dashboard() {
                     <div>
                       <h3 className="text-xl font-semibold text-gray-800">Analysis Complete</h3>
                       <p className="text-gray-600">
-                        {result.requirements?.length || 0} files processed successfully
+                        {result.requirements?.length馆length || 0} files processed successfully
                       </p>
                     </div>
                   </div>

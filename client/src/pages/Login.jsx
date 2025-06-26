@@ -242,7 +242,7 @@ export default function Login({ onLoginSuccess }) {
                       <button
                         type="button"
                         onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                        className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-700 hover:text-gray-600"
                       >
                         {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                       </button>
@@ -261,11 +261,11 @@ export default function Login({ onLoginSuccess }) {
 
                 {/* Sign In Link */}
                 <div className="text-center mt-4">
-                  <span className="text-gray-600 text-sm">Already have an account? </span>
+                  <span className="text-gray-700 text-sm">Already have an account? </span>
                   <button 
                     type="button" 
                     onClick={() => setActiveTab('signin')}
-                    className="text-teal-600 hover:text-teal-700 font-medium text-sm"
+                    className="text-teal-700 hover:text-teal-700 font-medium text-sm"
                   >
                     Sign in here
                   </button>
