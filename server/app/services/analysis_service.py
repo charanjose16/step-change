@@ -1672,6 +1672,21 @@ async def _generate_small_file_requirements(content: str, file_path: str, langua
             f"Key Functionalities\n{key_functionalities}\n\n"
             f"Workflow Summary\n{business_narrative['workflow']}"
         )
+    # .NET (C#) code files: Use LLM-powered chunk-based requirements generation (same as Python)
+    elif language.lower() in ["c#", "cs"] or file_path.lower().endswith(".cs"):
+        # Use the same chunk-based LLM analysis as Python
+        requirements = await generate_requirements_for_chunk(content, 0, language)
+        return requirements
+    # .NET Project/config files
+    elif file_path.lower().endswith(('.csproj', '.sln', '.json', '.yml', '.yaml', '.http')):
+        from app.utils.dotnet_parser import summarize_dotnet_config
+        config_summary = summarize_dotnet_config(content, file_path)
+        return config_summary
+    # Angular code files (TypeScript, TSX, HTML): Use LLM-powered chunk-based requirements generation (same as Python/C#)
+    elif language.lower() in ["typescript", "ts", "tsx"] or file_path.lower().endswith((".ts", ".tsx", ".html")):
+        requirements = await generate_requirements_for_chunk(content, 0, language)
+        return requirements
+
     else:
         return (
             f"Overview\nUtility file for {os.path.basename(file_path)}. {rules_summary}\n\n"
