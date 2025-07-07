@@ -6,53 +6,50 @@ import { useNavigate, useLocation } from 'react-router-dom';
 const formatRequirementSummary = (text) => {
   if (!text) return '';
 
-  // Split text into paragraphs
+  // Split text into paragraphs based on double newlines
   const paragraphs = text.split('\n\n');
   let formatted = [];
 
   for (const paragraph of paragraphs) {
+    // Split paragraph into lines and remove empty lines
     const lines = paragraph.split('\n').filter(l => l.trim());
     if (!lines.length) continue;
 
     // Check if paragraph is a numbered list (starts with "1.", "2.", etc.)
     const isNumberedList = lines[0].match(/^\d+\.\s+/);
     if (isNumberedList) {
-      // Process as a list, preserving serial numbers
+      // Format each numbered list item properly inside <li>
       const listItems = lines
         .filter(line => line.match(/^\d+\.\s+/))
         .map(line => {
           const match = line.match(/^(\d+\.\s+)(.*)$/);
+          const serial = match ? match[1] : '';
           const content = match ? match[2].trim() : line.trim();
-          const serial = match ? match[1].trim() : '';
-          return `<li class="mb-2 text-sm text-gray-800">${serial}${content}</li>`;
+          return `<li class="mb-1 text-sm text-gray-800">${serial} ${content}</li>`;
         });
       if (listItems.length) {
-        formatted.push(`<ul class="list-none pl-0 my-2">${listItems.join('')}</ul>`);
+        formatted.push(`<ul class="list-decimal list-inside my-2">${listItems.join('')}</ul>`);
         continue;
       }
     }
 
-    // Handle headers (Overview, Key Functionalities, etc.)
+    // Handle headers (Overview, Objective, Use Case, etc.)
     if (lines[0].match(/^(Overview|Objective|Use Case|Key Functionalities|Workflow Summary)$/)) {
       const header = lines[0];
       const content = lines.slice(1).join(' ').trim();
-      formatted.push(`<strong class="text-teal-700 text-xl block mt-6 mb-4">${header}</strong>`);
+      formatted.push(`<h3 class="text-teal-700 text-xl mt-6 mb-3 font-semibold">${header}</h3>`);
       if (content) {
-        formatted.push(`<p class="mb-2 text-sm text-gray-800">${content}</p>`);
+        formatted.push(`<p class="mb-3 text-sm text-gray-800 leading-relaxed">${content}</p>`);
       }
     } else {
-      // Regular paragraph
+      // Regular paragraph with proper spacing and line-height
       const content = lines.join(' ').trim();
-      formatted.push(`<p class="mb-2 text-sm text-gray-800">${content}</p>`);
+      formatted.push(`<p class="mb-3 text-sm text-gray-800 leading-relaxed">${content}</p>`);
     }
   }
 
-  return formatted
-    .join('')
-    .replace(/\*\*/g, '')
-    .replace(/\*/g, '')
-    .replace(/^#+\s*/gm, '')
-    .replace(/^-\s*/gm, '');
+  // Return the joined HTML string
+  return formatted.join('');
 };
 
 export default function RequirementDetailView({

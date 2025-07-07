@@ -31,7 +31,7 @@ const GraphDropdown = ({ summaryGraphResponses, loadingSummaryGraphs, summaryGra
     return (
       <div className="bg-white rounded-xl shadow-lg p-6 mt-6">
         <div className="flex items-center mb-4">
-          <BarChart3 className="h-6 w-6 text-teal-600 mr-2" />
+          <BarChart3 className="h-6 w-6 text-teal-700 mr-2" />
           <h2 className="text-2xl font-bold text-teal-800">Project Graphs</h2>
         </div>
         <div className="flex items-center justify-center py-8 text-red-600">
@@ -46,7 +46,7 @@ const GraphDropdown = ({ summaryGraphResponses, loadingSummaryGraphs, summaryGra
     return (
       <div className="bg-white rounded-xl shadow-lg p-6 mt-6">
         <div className="flex items-center mb-4">
-          <BarChart3 className="h-6 w-6 text-teal-600 mr-2" />
+          <BarChart3 className="h-6 w-6 text-teal-700 mr-2" />
           <h2 className="text-2xl font-bold text-teal-800">Project Graphs</h2>
         </div>
         <div className="text-gray-500 text-center py-8 italic">

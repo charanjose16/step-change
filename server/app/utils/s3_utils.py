@@ -9,6 +9,8 @@ from app.utils import logger
 from threading import Lock
 from app.config.settings import settings
 
+
+
 log_lock = Lock()
 
 # Initialize boto3 S3 client using settings

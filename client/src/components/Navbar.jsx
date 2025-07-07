@@ -26,7 +26,7 @@ export default function Navbar() {
         // Increased shadow for more depth
         <header className="bg-teal-700 text-white shadow-lg w-full">
             {/* Increased vertical padding */}
-            <nav className="flex items-center justify-between py-5 px-6">
+            <nav className="flex items-center justify-between py-3 px-4">
                 <div className="flex items-center space-x-4">
                     {/* Logo hover effect remains */}
                     <div className="mr-4 transform transition duration-300 hover:scale-105">
@@ -37,20 +37,20 @@ export default function Navbar() {
                         to="/dashboard"
                         className="px-3 py-2 rounded transition duration-300" // Removed hover:text-teal-200
                     >
-                        Dashboard
+                        
                     </Link>
                 </div>
                 {/* Increased spacing between user info and logout button */}
                 <div className="flex items-center space-x-6">
                     {/* User info section with hover effect */}
-                    <div className="flex items-center space-x-2 cursor-default px-3 py-2 rounded transition duration-300 hover:bg-teal-600">
+                    <div className="flex items-center space-x-2 cursor-default px-3 py-2 rounded transition duration-300 hover:bg-teal-700">
                         <User className="h-5 w-5" />
                         <span className="hidden sm:inline">{username}</span>
                     </div>
                     {/* Updated Logout button style: removed border, added bg hover */}
                     <button
                         onClick={handleLogout}
-                        className="flex items-center space-x-2 px-4 py-2 rounded transition duration-300 text-white hover:bg-teal-600 hover:shadow-sm" // Removed border classes, added bg hover
+                        className="flex items-center space-x-2 px-4 py-2 rounded transition duration-300 text-white hover:bg-teal-700 hover:shadow-sm" // Removed border classes, added bg hover
                         title="Logout" // Added title for accessibility
                     >
                         <LogOut className="h-5 w-5" />
