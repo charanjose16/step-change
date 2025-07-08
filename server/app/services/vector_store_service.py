@@ -8,11 +8,248 @@ from app.config.llm_config import llm_config
 from datetime import datetime
 import tiktoken
 
+import os
+from sqlalchemy import create_engine, Column, Integer, String, JSON, LargeBinary, Float, select, Text
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import inspect
+from dotenv import load_dotenv
+import json
+
+load_dotenv()
+
+Base = declarative_base()
+
+class PgVectorDocument(Base):
+    __tablename__ = 'vector_documents'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    content = Column(Text, nullable=False)
+    embedding = Column(Text, nullable=False)  # Store as JSON string
+    meta = Column(JSONB, nullable=True)  # Renamed from 'metadata' to 'meta'
+    created_at = Column(Float, default=lambda: datetime.utcnow().timestamp())
+
+class PgVectorStoreService:
+    def _get_tokenizer(self):
+        """Get tokenizer for counting tokens"""
+        if not hasattr(self, '_tokenizer') or self._tokenizer is None:
+            try:
+                import tiktoken
+                self._tokenizer = tiktoken.encoding_for_model("text-embedding-ada-002")
+            except Exception:
+                import tiktoken
+                self._tokenizer = tiktoken.get_encoding("cl100k_base")
+        return self._tokenizer
+
+    def _count_tokens(self, text: str) -> int:
+        """Count tokens in text"""
+        tokenizer = self._get_tokenizer()
+        return len(tokenizer.encode(text))
+
+    def _chunk_text(self, text: str, max_tokens: int = None):
+        """Chunk text to fit within token limits"""
+        if not hasattr(self, 'max_embedding_tokens'):
+            self.max_embedding_tokens = 8192
+        if max_tokens is None:
+            max_tokens = self.max_embedding_tokens - 100  # Leave some buffer
+        tokenizer = self._get_tokenizer()
+        tokens = tokenizer.encode(text)
+        if len(tokens) <= max_tokens:
+            return [text]
+        chunks = []
+        for i in range(0, len(tokens), max_tokens):
+            chunk_tokens = tokens[i:i + max_tokens]
+            chunk_text = tokenizer.decode(chunk_tokens)
+            chunks.append(chunk_text)
+        return chunks
+
+    def __init__(self):
+        self.max_embedding_tokens = 8192  # Ensure this is always set for chunking
+        pg_url = os.getenv('POSTGRES_URL')
+        if not pg_url:
+            host = os.getenv('POSTGRES_HOST', 'localhost')
+            port = os.getenv('POSTGRES_PORT', '5432')
+            user = os.getenv('POSTGRES_USER', 'postgres')
+            password = os.getenv('POSTGRES_PASSWORD', 'postgres')
+            db = os.getenv('POSTGRES_DB', 'stepChange')
+            pg_url = f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{db}"
+        self.engine = create_engine(pg_url)
+        self.Session = sessionmaker(bind=self.engine)
+        self.dimension = int(os.getenv('VECTOR_DIM', '3072'))
+        logger.info(f"[VECTOR STORE] Using embedding dimension: {self.dimension}")
+        Base.metadata.create_all(self.engine)
+
+    def add_documents_sync(self, documents: List[Dict[str, Any]]):
+        session = self.Session()
+        added_count = 0
+        skipped_count = 0
+        chunked_count = 0
+        try:
+            for idx, doc in enumerate(documents):
+                content = doc.get("content", "")
+                meta = doc.get("metadata", {})
+                # Chunk content if too large
+                tokenizer = self._get_tokenizer()
+                max_tokens = self.max_embedding_tokens
+                chunks = self._chunk_text(content, max_tokens)
+                if len(chunks) > 1:
+                    logger.warning(f"Document at index {idx} chunked into {len(chunks)} pieces due to token limit.")
+                    chunked_count += len(chunks) - 1
+                for chunk_idx, chunk in enumerate(chunks):
+                    try:
+                        embedding = llm_config._embed_model.get_text_embedding(chunk)
+                        if isinstance(embedding, np.ndarray):
+                            embedding = embedding.tolist()
+                        if hasattr(self, 'dimension') and len(embedding) != self.dimension:
+                            logger.warning(f"Skipping chunk {chunk_idx} of doc {idx}: embedding dimension {len(embedding)} != expected {self.dimension}.")
+                            skipped_count += 1
+                            continue
+                        embedding_json = json.dumps(embedding)
+                        vec_doc = PgVectorDocument(
+                            content=chunk,
+                            embedding=embedding_json,
+                            meta=meta
+                        )
+                        session.add(vec_doc)
+                        added_count += 1
+                    except Exception as e:
+                        logger.warning(f"Skipping chunk {chunk_idx} of doc {idx}: error during embedding or serialization: {e}")
+                        skipped_count += 1
+                        continue
+            session.commit()
+            logger.info(f"Added {added_count} document chunks to Postgres vector store. Skipped {skipped_count} chunks. {chunked_count} additional chunks created due to token limit.")
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error adding documents to Postgres vector store: {e}")
+            raise
+        finally:
+            session.close()
+
+    def search_sync(self, query: str, k: int = 5, filters: Optional[Dict] = None) -> List[Dict[str, Any]]:
+        from app.config.llm_config import llm_config
+        token_count = self._count_tokens(query)
+        if token_count > self.max_embedding_tokens:
+            chunks = self._chunk_text(query, self.max_embedding_tokens)
+            logger.warning(f"[SEARCH] Query too long ({token_count} tokens), chunking into {len(chunks)} chunks.")
+            query = chunks[0]
+            logger.warning(f"[SEARCH] Using first chunk with {self._count_tokens(query)} tokens for embedding.")
+        query_embedding = np.array(llm_config._embed_model.get_text_embedding(query)).astype('float32')
+        session = self.Session()
+        try:
+            sql = session.query(PgVectorDocument)
+            if filters:
+                for key, value in filters.items():
+                    sql = sql.filter(PgVectorDocument.meta[key].astext == str(value))
+            docs = sql.all()
+            results = []
+            for i, doc in enumerate(docs):
+                doc_embedding = np.array(json.loads(doc.embedding)).astype('float32')
+                if i < 5:
+                    logger.debug(f"[VECTOR STORE][RAG] Query embedding shape: {query_embedding.shape}, Doc {i} embedding shape: {doc_embedding.shape}")
+                score = float(1 / (1 + np.linalg.norm(doc_embedding - query_embedding)))
+                results.append({
+                    "content": doc.content,
+                    "metadata": doc.meta,  # Return as 'metadata' for compatibility
+                    "score": score
+                })
+            results.sort(key=lambda x: x["score"], reverse=True)
+            return results[:k]
+        except Exception as e:
+            logger.error(f"Error searching Postgres vector store: {e}")
+            return []
+        finally:
+            session.close()
+
+    async def add_documents(self, documents: List[Dict[str, Any]]):
+        # For compatibility with existing async code
+        import asyncio
+        session = self.Session()
+        added_count = 0
+        skipped_count = 0
+        chunked_count = 0
+        try:
+            for idx, doc in enumerate(documents):
+                content = doc.get("content", "")
+                meta = doc.get("metadata", {})
+                tokenizer = self._get_tokenizer()
+                max_tokens = self.max_embedding_tokens
+                chunks = self._chunk_text(content, max_tokens)
+                if len(chunks) > 1:
+                    logger.warning(f"[ASYNC] Document at index {idx} chunked into {len(chunks)} pieces due to token limit.")
+                    chunked_count += len(chunks) - 1
+                for chunk_idx, chunk in enumerate(chunks):
+                    try:
+                        embedding = await llm_config._embed_model.aget_text_embedding(chunk)
+                        if isinstance(embedding, np.ndarray):
+                            embedding = embedding.tolist()
+                        if hasattr(self, 'dimension') and len(embedding) != self.dimension:
+                            logger.warning(f"[ASYNC] Skipping chunk {chunk_idx} of doc {idx}: embedding dimension {len(embedding)} != expected {self.dimension}.")
+                            skipped_count += 1
+                            continue
+                        embedding_json = json.dumps(embedding)
+                        vec_doc = PgVectorDocument(
+                            content=chunk,
+                            embedding=embedding_json,
+                            meta=meta
+                        )
+                        session.add(vec_doc)
+                        added_count += 1
+                    except Exception as e:
+                        logger.warning(f"[ASYNC] Skipping chunk {chunk_idx} of doc {idx}: error during embedding or serialization: {e}")
+                        skipped_count += 1
+                        continue
+            session.commit()
+            logger.info(f"[ASYNC] Added {added_count} document chunks to Postgres vector store. Skipped {skipped_count} chunks. {chunked_count} additional chunks created due to token limit.")
+        except Exception as e:
+            session.rollback()
+            logger.error(f"[ASYNC] Error adding documents to Postgres vector store: {e}")
+            raise
+        finally:
+            session.close()
+
+    async def search(self, query: str, k: int = 5, filters: Optional[Dict] = None) -> List[Dict[str, Any]]:
+        import asyncio
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self.search_sync, query, k, filters)
+
+    async def get_related_context(self, query: str, k: int = 5, filters: Optional[Dict] = None) -> Dict[str, Any]:
+        results = await self.search(query, k, filters)
+        if not results:
+            return {
+                "context": "",
+                "metadata": {},
+                "related_files": []
+            }
+        context_parts = [r["content"] for r in results]
+        return {
+            "context": "\n---\n".join(context_parts),
+            "metadata": {
+                "total_chunks": len(results),
+                "avg_score": sum(r["score"] for r in results) / len(results)
+            },
+            "related_files": [
+                {
+                    "file_path": r["metadata"].get("file_path", "unknown"),
+                    "language": r["metadata"].get("language", "unknown"),
+                    "score": r["score"]
+                }
+                for r in results
+            ]
+        }
+
+# Factory function for choosing vector store backend
+def get_vector_store_service():
+    if os.getenv("POSTGRES_VECTOR_STORE", "0") == "1":
+        return PgVectorStoreService()
+    else:
+        return VectorStoreService()
+
 class VectorStoreService:
     def __init__(self):
         self.index = None
         self.documents = []
-        self.dimension = None  # Will be determined dynamically
+        self.dimension = int(os.getenv('VECTOR_DIM', '3072'))  # Default for text-embedding-3-large
+        logger.info(f"[VECTOR STORE] Using embedding dimension: {self.dimension}")
         self.metadata_index = {}  # For quick metadata lookups
         self._embedding_dimension_determined = False
         self.max_embedding_tokens = 8192  # Your model's limit
@@ -89,48 +326,35 @@ class VectorStoreService:
             raise ValueError(error_msg)
         
     async def get_embedding(self, text: str) -> np.ndarray:
-        """Get embedding using LlamaIndex Azure OpenAI embedding model"""
+        """Get embedding using LlamaIndex Azure OpenAI embedding model, always within token limit."""
         try:
-            # Check token count and chunk if necessary
             token_count = self._count_tokens(text)
             if token_count > self.max_embedding_tokens:
-                logger.warning(f"Text too long ({token_count} tokens), chunking...")
-                chunks = self._chunk_text(text)
-                # Use the first chunk for embedding (you might want to handle this differently)
+                chunks = self._chunk_text(text, self.max_embedding_tokens)
+                logger.warning(f"Text too long ({token_count} tokens), chunking into {len(chunks)} chunks.")
+                # For embedding, return the embedding for the first chunk only (legacy behavior)
                 text = chunks[0]
                 logger.warning(f"Using first chunk with {self._count_tokens(text)} tokens")
-            
-            # Use LlamaIndex's embedding model
             embedding = await llm_config._embed_model.aget_text_embedding(text)
             embedding_array = np.array(embedding).astype('float32')
-            
-            # Validate dimension
             self._validate_embedding_dimension(embedding_array, "in get_embedding")
-            
             return embedding_array
         except Exception as e:
             logger.error(f"Error getting embedding: {e}")
             raise
         
     def get_embedding_sync(self, text: str) -> np.ndarray:
-        """Get embedding synchronously using LlamaIndex"""
+        """Get embedding synchronously using LlamaIndex, always within token limit."""
         try:
-            # Check token count and chunk if necessary
             token_count = self._count_tokens(text)
             if token_count > self.max_embedding_tokens:
-                logger.warning(f"Text too long ({token_count} tokens), chunking...")
-                chunks = self._chunk_text(text)
-                # Use the first chunk for embedding (you might want to handle this differently)
+                chunks = self._chunk_text(text, self.max_embedding_tokens)
+                logger.warning(f"Text too long ({token_count} tokens), chunking into {len(chunks)} chunks.")
                 text = chunks[0]
                 logger.warning(f"Using first chunk with {self._count_tokens(text)} tokens")
-            
-            # Use LlamaIndex's embedding model synchronously
             embedding = llm_config._embed_model.get_text_embedding(text)
             embedding_array = np.array(embedding).astype('float32')
-            
-            # Validate dimension
             self._validate_embedding_dimension(embedding_array, "in get_embedding_sync")
-            
             return embedding_array
         except Exception as e:
             logger.error(f"Error getting embedding: {e}")

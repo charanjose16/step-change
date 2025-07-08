@@ -25,6 +25,7 @@ class Settings(BaseSettings):
 
     # Database configuration
     DATABASE_URL: str = Field(..., env="DATABASE_URL")
+    postgres_vector_store: str = Field("0", env="POSTGRES_VECTOR_STORE")  # Add this field for vector store backend
 
     # JWT configuration
     JWT_SECRET: str = Field(..., env="JWT_SECRET")

@@ -18,7 +18,7 @@ import time
 import openpyxl
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.utils import get_column_letter
-from .vector_store_service import VectorStoreService
+from .vector_store_service import get_vector_store_service
 
 # Constants
 CHUNK_GROUP_SIZE = 40
@@ -33,7 +33,7 @@ BATCH_SIZE = 50
 MAX_LINES_PER_CHUNK = 2000
 MAX_SECTION_TOKENS = 1000
 log_lock = Lock()
-vector_store = VectorStoreService()
+vector_store = get_vector_store_service()
 VECTOR_STORE_DIR = "vector_store"
 
 # Tokenizer and Chunking Utilities
@@ -1595,8 +1595,9 @@ async def _store_in_vector_db_async(content: str, file_path: str, language: str,
         
         # Store in vector database
         await vector_store.add_documents(documents)
-        # Save only periodically or at the end to reduce I/O
-        if len(documents) > 10:  # Only save for larger document sets
+        # Save only if using local FAISS vector store
+        from app.services.vector_store_service import VectorStoreService
+        if isinstance(vector_store, VectorStoreService) and len(documents) > 10:
             vector_store.save(VECTOR_STORE_DIR)
             
     except Exception as e:
@@ -1958,10 +1959,12 @@ async def generate_requirements_for_files_whole(directory: str) -> FilesRequirem
         files_requirements_obj.project_summary = project_summary
         files_requirements_obj.graphs = graphs
 
-        # Save vector store at the end
+        # Save vector store at the end (only for local FAISS backend)
+        from app.services.vector_store_service import VectorStoreService
         try:
-            vector_store.save(VECTOR_STORE_DIR)
-            logger.info("Vector store saved successfully")
+            if isinstance(vector_store, VectorStoreService):
+                vector_store.save(VECTOR_STORE_DIR)
+                logger.info("Vector store saved successfully")
         except Exception as e:
             logger.error(f"Failed to save vector store: {e}")
 
