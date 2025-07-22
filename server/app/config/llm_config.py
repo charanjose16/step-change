@@ -59,4 +59,4 @@ class LLMConfig(BaseSettings):
 
 # Create a singleton instance and initialize models once at startup
 llm_config = LLMConfig()
-llm_config.init_llamaindex()
+"""llm_config.init_llamaindex()  # Deprecated: now using Bedrock Sonnet via bedrock_llm.py"""

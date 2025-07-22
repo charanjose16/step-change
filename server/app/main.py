@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app.routers import auth
-from app.config.llm_config import llm_config
+from app.config.bedrock_llm import llm_config
 from app.dependencies import get_current_user
 from app.utils import logger
 from app.config.dbConfig import engine, Base
@@ -32,7 +32,7 @@ app = FastAPI(
 origins = [
     "http://localhost:5173",
     "http://localhost:5174",
-    "http://localhost:5175"
+    "http://localhost:5177"
 ]
 
 app.add_middleware(
@@ -69,3 +69,7 @@ async def log_requests(request: Request, call_next):
         f"{request.method} {request.url.path} {response.status_code} {duration:.2f}s"
     )
     return response
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8001, reload=True)

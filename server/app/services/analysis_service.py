@@ -5,7 +5,7 @@ import re
 from enum import Enum
 from typing import List, Tuple, Dict
 from pydantic import BaseModel, ValidationError
-from app.config.llm_config import llm_config
+from app.config.bedrock_llm import llm_config
 from app.utils import logger
 from app.utils.file_utils import get_code_files, get_file_language
 import aiofiles
@@ -19,6 +19,9 @@ import openpyxl
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.utils import get_column_letter
 from .vector_store_service import get_vector_store_service
+import logging
+from app.utils.angular_parser import summarize_angular_file
+from app.utils.dotnet_parser import summarize_csharp_code
 
 # Constants
 CHUNK_GROUP_SIZE = 40
@@ -228,101 +231,68 @@ async def narrative_business_logic_summary(technical_logic: str, file_path: str)
     from app.utils.logger import logger
     logger.info(f"[LLM ENTRY] narrative_business_logic_summary called for file: {file_path}")
     
+    # Step 1: Extract all business rules/logic as a list
+    rules_prompt = f"""
+You are an expert business analyst. Given the following technical summary of an Excel/VBA file, extract ALL business rules, logic, macros, formulas, and workflow steps as a detailed, numbered list. Be exhaustive and do not summarize—list every rule, macro, formula, and workflow step you can find. If there are none, say 'No business rules or logic found.'
+
+TECHNICAL SUMMARY:
+{technical_logic}
+"""
+    max_tokens = 1000
+    logger.debug(f"[LLM DEBUG] Rules extraction prompt for {file_path}: {rules_prompt[:1000]}...")
+    import asyncio
+    loop = asyncio.get_event_loop()
     try:
-        prompt = f"""You are a business analyst. Given the following technical summary of an Excel/VBA file, write a detailed business logic summary for stakeholders.\n\nInstructions:\n- Identify and describe each macro/subroutine, its business purpose, parameters, and how it processes data.\n- Explain input validation, calculations, adjustments, and reporting in business terms.\n- Connect technical elements (like macro names, parameters, and key formulas) to their real-world business function.\n\nExample Output (JSON):\n{{\n  \"overview\": \"The ComplexProjectCalculation macro in rule.xlsm automates project cost calculations across multiple worksheets. It processes input data, applies financial adjustments, and generates summarized reports for project budgeting and financial oversight.\",\n  \"objective\": \"To calculate and summarize project costs with adjustments for taxes, discounts, and overheads, ensuring accurate financial reporting.\",\n  \"use_case\": \"Project managers use the macro to input project data, validate entries, compute adjusted costs, and review budget status for internal and external projects during financial planning and audits.\",\n  \"key_functionalities\": [\n    \"Input Validation: Verifies that project type, hours, and rate are provided to prevent calculation errors.\",\n    \"Total Cost Calculation: Computes base project costs by multiplying hours, rate, and a project-type-specific multiplier, setting the multiplier to 1 for internal projects.\",\n    \"Cost Adjustments: Applies tax, discount, and overhead adjustments to base costs to determine final project costs.\",\n    \"Summary Generation: Populates a summary table with project names, final costs, budget status, and error messages for invalid inputs.\",\n    \"Grand Total Reporting: Calculates and displays the sum of all adjusted project costs in the summary worksheet.\"\n  ],\n  \"workflow\": \"The macro processes project data from input worksheets, performs validations and calculations, applies financial adjustments, and generates a summary report with budget alerts and grand totals.\"\n}}\n\nTECHNICAL SUMMARY (includes macro names, parameters, comments, and business logic steps):\n{technical_logic}\n\nOutput ONLY a valid JSON object with the following keys: overview, objective, use_case, key_functionalities, workflow. Do not include any text before or after the JSON. Each section should be a paragraph or bulleted list (where appropriate), written for a business audience."""
-        logger.debug(f"[LLM DEBUG] Prompt sent to LLM for file {file_path}: {prompt[:1000]}...")
-        
+        rules_response = await loop.run_in_executor(
+            None,
+            lambda: asyncio.run(llm_config._llm(rules_prompt, max_tokens=max_tokens, temperature=0.2, stop=None))
+        )
+        logger.debug(f"[LLM DEBUG] Raw LLM rules output for {file_path}: {rules_response[:200]}...")
+    except Exception as e:
+        logger.error(f"[LLM ERROR] Exception during LLM rules extraction for {file_path}: {e}")
+        rules_response = "No business rules or logic found."
+
+    # Step 2: Sectioned requirements prompt, forceful and explicit
+    example_output = EXAMPLES['excel']
+    sectioned_prompt = f"""
+You are a business analyst. Given the following list of business rules, logic, macros, formulas, and workflow steps from an Excel/VBA file, you MUST output ALL SIX SECTIONS: Overview, Objective, Use Case, Key Functionalities, Workflow Summary, Dependent Files. Each section must be non-empty, file-specific, and at least 3 sentences. If you cannot find business logic for a section, explain why, but do not skip the section. If you do not output all six sections, your answer will be rejected. Use the example format below.
+
+Example output:
+{example_output}
+
+BUSINESS RULES AND LOGIC:
+{rules_response}
+"""
+    missing_sections = set(REQUIRED_SECTIONS)
+    prev_output = ""
+    for attempt in range(1, 4):
+        if attempt == 1:
+            full_prompt = sectioned_prompt
+        else:
+            full_prompt = f"Your previous output was missing the following sections: {', '.join([s.title() for s in missing_sections])}. You must output ALL SIX SECTIONS, each with at least 3 sentences, using the business rules and logic below. If you do not, your answer will be rejected.\nPrevious output:\n{prev_output}\n\nBUSINESS RULES AND LOGIC:\n{rules_response}\n"
+        logger.debug(f"[LLM DEBUG] Sectioned prompt for {file_path} (attempt {attempt}): {full_prompt[:1000]}...")
         try:
-            if not hasattr(llm_config, '_llm') or llm_config._llm is None:
-                logger.error(f"[LLM ERROR] LLM client (_llm) is not initialized on llm_config for file {file_path}. Fallback will be used.")
-                raise RuntimeError("LLM client (_llm) is not initialized.")
-            import asyncio
-            loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(
                 None,
-                lambda: llm_config._llm.complete(
-                    prompt=prompt,
-                    max_tokens=700,
-                    temperature=0.2,
-                    stop=None,
-                    model=getattr(llm_config, 'azure_openai_model', None)
-                )
+                lambda: asyncio.run(llm_config._llm(full_prompt, max_tokens=max_tokens, temperature=0.2, stop=None))
             )
-            # Extract response text
-            if hasattr(response, 'text'):
-                response_text = response.text
-            elif hasattr(response, 'content'):
-                response_text = response.content
-            else:
-                response_text = str(response)
-            logger.debug(f"[LLM DEBUG] Raw LLM response for file {file_path}: {response_text[:200]}...")
+            logger.debug(f"[LLM DEBUG] Raw LLM sectioned output for {file_path} (attempt {attempt}): {response[:200]}...")
         except Exception as e:
-            logger.error(f"[LLM ERROR] Exception during LLM call for {file_path}: {e}")
-            raise
-        
-        # Extract JSON from Markdown code block, if present
-        pattern = r"```json\s*([\s\S]*?)\s*```"
-        match = re.search(pattern, response_text)
-        if match:
-            response_text = match.group(1).strip()
-            logger.debug(f"[LLM DEBUG] Extracted JSON from Markdown block for {file_path}")
-        else:
-            logger.debug(f"[LLM DEBUG] No Markdown JSON block found; using raw response for {file_path}")
-        
-        # Try to parse JSON from response
-        try:
-            parsed = json.loads(response_text)
-            # Handle double-encoded JSON (string inside string)
-            if isinstance(parsed, str):
-                parsed = json.loads(parsed)
-            logger.info(f"[LLM SUCCESS] Parsed LLM response for file {file_path}: {parsed}")
-            # Ensure all keys exist
-            for k in ["overview", "objective", "use_case", "key_functionalities", "workflow"]:
-                if k not in parsed:
-                    parsed[k] = "[Not provided]"
-            return parsed
-        except json.JSONDecodeError as e:
-            logger.error(f"[LLM ERROR] Failed to parse LLM response as JSON for {file_path}: {e}\nRaw response: {response_text}")
-            # Return response as overview if not valid JSON
-            return {
-                "overview": response_text,
-                "objective": "[Not provided]",
-                "use_case": "[Not provided]",
-                "key_functionalities": "[Not provided]",
-                "workflow": "[Not provided]"
-            }
-    except Exception as e:
-        logger.error(f"[LLM FALLBACK] Exception in narrative_business_logic_summary for {file_path}: {e}", exc_info=True)
-        logger.info(f"[LLM FALLBACK] Using fallback narrative generation for file {file_path}")
-        # Fallback: template-based summary with keyword breakdown
-        lines = [l.strip() for l in technical_logic.splitlines() if l.strip()]
-        validations = [l for l in lines if 'validat' in l.lower() or 'check' in l.lower() or 'error' in l.lower()]
-        calculations = [l for l in lines if 'calculat' in l.lower() or 'compute' in l.lower() or 'cost' in l.lower() or 'total' in l.lower() or 'sum' in l.lower()]
-        adjustments = [l for l in lines if 'adjust' in l.lower() or 'tax' in l.lower() or 'discount' in l.lower() or 'overhead' in l.lower()]
-        summaries = [l for l in lines if 'summary' in l.lower() or 'report' in l.lower() or 'grand total' in l.lower()]
-        overview = f"This file automates business calculations and reporting for key processes, including validation, calculation, adjustment, and summary reporting." if lines else "[No business logic detected]"
-        objective = f"To automate business calculations and ensure accurate reporting and validation for business processes."
-        use_case = f"Used by business users to input data, trigger calculations, apply adjustments, and generate summary reports for operational and financial decision-making."
-        key_func_parts = []
-        if validations:
-            key_func_parts.append("1. Input Validation: " + "; ".join(validations[:2]))
-        if calculations:
-            key_func_parts.append(f"{len(key_func_parts)+1}. Calculation: " + "; ".join(calculations[:2]))
-        if adjustments:
-            key_func_parts.append(f"{len(key_func_parts)+1}. Adjustments: " + "; ".join(adjustments[:2]))
-        if summaries:
-            key_func_parts.append(f"{len(key_func_parts)+1}. Reporting: " + "; ".join(summaries[:2]))
-        if not key_func_parts:
-            key_func_parts = ["- [No detailed logic detected]"]
-        workflow = "The workflow includes input validation, business calculations, adjustment of results, and summary reporting as described above." if lines else "[No workflow detected]"
-        return {
-            "overview": overview,
-            "objective": objective,
-            "use_case": use_case,
-            "key_functionalities": "\n".join(key_func_parts),
-            "workflow": workflow
-        }
-    
+            logger.error(f"[LLM ERROR] Exception during LLM sectioned requirements for {file_path}: {e}")
+            response = ""
+        sections = _parse_sections(response)
+        prev_output = response
+        missing_sections = {req for req in REQUIRED_SECTIONS if req not in sections or not sections[req] or len(sections[req].strip()) < 10}
+        logger.debug(f"Attempt {attempt} for {file_path}: missing sections: {missing_sections}")
+        # If the LLM returned only a summary or rules, re-prompt with a warning
+        if len(sections) == 1 and 'overview' in sections:
+            logger.warning(f"LLM returned only a summary for {file_path}, re-prompting for all sections.")
+            continue
+        if not missing_sections:
+            return {req: sections[req].strip() for req in REQUIRED_SECTIONS}
+    logger.warning(f"LLM failed to generate all required sections for {file_path} after 3 attempts. Missing: {missing_sections}")
+    return {"error": f"LLM failed to generate all required sections for {file_path}. Please check the file content or try again."}
+
 # Utility functions (unchanged)
 @lru_cache(maxsize=1000)
 def count_tokens(text: str, model: str = "gpt-4o") -> int:
@@ -423,9 +393,9 @@ async def generate_graph_from_requirement(requirement: str, target_graph: str = 
             async with asyncio.timeout(30):
                 with ThreadPoolExecutor(max_workers=1) as executor:
                     result = await asyncio.get_event_loop().run_in_executor(
-                        executor, lambda: llm_config._llm.complete(prompt)
+                        executor, lambda: asyncio.run(llm_config._llm(prompt))
                     )
-            generated_code = result.text.strip()
+            generated_code = result.strip()
             if not generated_code or len(generated_code.split('\n')) < 2:
                 return GraphResponse(
                     target_graph=target_graph,
@@ -464,7 +434,7 @@ async def split_into_chunks(content: str, language: str, file_path: str, max_tok
     total_lines = len(lines)
     total_tokens = count_tokens(content)
     with log_lock:
-        logger.debug(f"Starting chunking for {file_path}: {total_tokens} tokens, {total_lines} lines")
+        logger.info(f"[CHUNK] Starting chunking for {file_path}: {total_tokens} tokens, {total_lines} lines")
 
     summary = "Summary unavailable.\n"
     if total_tokens < MAX_SAFE_TOKENS:
@@ -477,17 +447,17 @@ async def split_into_chunks(content: str, language: str, file_path: str, max_tok
             async with asyncio.timeout(5):
                 with ThreadPoolExecutor(max_workers=1) as executor:
                     summary_result = await asyncio.get_event_loop().run_in_executor(
-                        executor, lambda: llm_config._llm.complete(summary_prompt)
+                        executor, lambda: asyncio.run(llm_config._llm(summary_prompt))
                     )
-                summary = summary_result.text.strip() + "\n"
+                summary = summary_result.strip() + "\n"
                 with log_lock:
-                    logger.debug(f"Generated summary for {file_path}")
+                    logger.info(f"[CHUNK] Generated summary for {file_path}")
         except asyncio.TimeoutError:
             with log_lock:
-                logger.warning(f"Summary generation timed out for {file_path}")
-        except Exception:
+                logger.warning(f"[CHUNK] Summary generation timed out for {file_path}")
+        except Exception as exc:
             with log_lock:
-                logger.warning(f"Failed to generate summary for {file_path}")
+                logger.warning(f"[CHUNK] Failed to generate summary for {file_path}: {exc}")
 
     target_tokens = max_tokens * 4 // 5
     tokens_per_line = total_tokens / total_lines if total_lines > 0 else 1
@@ -509,17 +479,22 @@ async def split_into_chunks(content: str, language: str, file_path: str, max_tok
         chunk_content = f"File Summary:\n{summary}\nChunk Content:\n{chunk_content}"
         if count_tokens(chunk_content) > max_tokens:
             with log_lock:
-                logger.warning(f"Chunk at lines {current_line}-{chunk_end} in {file_path} exceeds token limit. Truncating.")
+                logger.warning(f"[CHUNK] Chunk at lines {current_line}-{chunk_end} in {file_path} exceeds token limit. Truncating.")
             chunk_lines = chunk_lines[:len(chunk_lines) * 3 // 4]
-            chunk_content = f"File Summary:\n{summary}\nChunk Content:\n{'\n'.join(chunk_lines)}"
+            chunk_content = f"File Summary:\n{summary}\nChunk Content:\n{chr(10).join(chunk_lines)}"
 
         chunks.append((chunk_content, current_line, chunk_end))
         with log_lock:
-            logger.debug(f"Chunk {len(chunks)} for {file_path}: {token_count} tokens, lines {current_line}-{chunk_end}")
+            logger.info(f"[CHUNK] Chunk {len(chunks)} for {file_path}: {token_count} tokens, lines {current_line}-{chunk_end}")
         current_line = chunk_end
 
+    if not chunks:
+        # Always emit at least one chunk (even for empty files)
+        chunks.append(("", 1, 1))
+        with log_lock:
+            logger.warning(f"[CHUNK] No chunks created for {file_path}. Emitting empty chunk.")
     with log_lock:
-        logger.info(f"Completed chunking for {file_path}: {len(chunks)} chunks")
+        logger.info(f"[CHUNK] Completed chunking for {file_path}: {len(chunks)} chunks")
     return chunks
 
 async def detect_business_rules(content: str, language: str) -> List[Dict[str, str]]:
@@ -559,9 +534,9 @@ async def detect_business_rules(content: str, language: str) -> List[Dict[str, s
                 async with asyncio.timeout(15):
                     with ThreadPoolExecutor(max_workers=1) as executor:
                         result = await asyncio.get_event_loop().run_in_executor(
-                            executor, lambda: llm_config._llm.complete(semantic_prompt)
+                            executor, lambda: asyncio.run(llm_config._llm(semantic_prompt))
                         )
-            output_text = result.text.strip()
+            output_text = result.strip()
 
             with log_lock:
                 logger.debug(f"Raw LLM output: {output_text[:500]}...")
@@ -569,7 +544,7 @@ async def detect_business_rules(content: str, language: str) -> List[Dict[str, s
             if not output_text:
                 raise ValueError("Empty response from LLM")
 
-            semantic_rules = json.loads(output_text)
+            semantic_rules = extract_json_from_llm_output(output_text)
             if not isinstance(semantic_rules, list):
                 raise ValueError("LLM response is not a list")
 
@@ -581,7 +556,7 @@ async def detect_business_rules(content: str, language: str) -> List[Dict[str, s
 
         except (json.JSONDecodeError, ValueError, asyncio.TimeoutError, Exception) as e:
             with log_lock:
-                logger.warning(f"Semantic rule detection failed: {str(e)}")
+                logger.warning(f"Semantic rule detection failed: {str(e)} | Raw output: {output_text[:200]}")
 
     # Final log summary
     if not rules_detected:
@@ -693,14 +668,10 @@ Describe how the segment supports the file's business process (2-3 sentences).
                 async with asyncio.timeout(30):
                     with ThreadPoolExecutor(max_workers=1) as executor:
                         result = await asyncio.get_event_loop().run_in_executor(
-                            executor, lambda: llm_config._llm.complete(
-                                prompt=prompt,
-                                max_tokens=500,
-                                temperature=0.2
-                            )
+                            executor, lambda: asyncio.run(llm_config._llm(prompt, max_tokens=500, temperature=0.2))
                         )
                 
-                req_text = result.text.strip()
+                req_text = result.strip()
                 with log_lock:
                     logger.debug(f"Raw LLM output for chunk {chunk_index + 1} (hash: {chunk_hash}): {req_text[:200]}...")
                 
@@ -820,10 +791,9 @@ async def extract_organization_specific_rules_for_chunk(chunk_content: str, chun
             async with asyncio.timeout(30):
                 with ThreadPoolExecutor(max_workers=1) as executor:
                     result = await asyncio.get_event_loop().run_in_executor(
-                        executor, lambda: llm_config._llm.complete(prompt)
-
+                        executor, lambda: asyncio.run(llm_config._llm(prompt))
                     )
-            rules_text = result.text.strip()
+            rules_text = result.strip()
             with log_lock:
                 logger.debug(f"Raw LLM output for org-specific rules chunk {chunk_index + 1} (hash: {chunk_hash}): {rules_text[:200]}...")
 
@@ -965,9 +935,9 @@ async def combine_requirements(requirements_list: List[str], language: str) -> s
             async with asyncio.timeout(10):
                 with ThreadPoolExecutor(max_workers=1) as executor:
                     result = await asyncio.get_event_loop().run_in_executor(
-                        executor, lambda: llm_config._llm.complete(summary_prompt)
+                        executor, lambda: asyncio.run(llm_config._llm(summary_prompt))
                     )
-                combined = result.text.strip()
+                combined = result.strip()
                 sections = re.split(r'\n\n(?=Overview|Objective|Use Case|Key Functionalities|Workflow Summary)', combined)
                 section_dict = {}
                 for section in sections:
@@ -1398,10 +1368,10 @@ Project Information:
                 async with asyncio.timeout(45):
                     with ThreadPoolExecutor(max_workers=1) as executor:
                         result = await asyncio.get_event_loop().run_in_executor(
-                            executor, lambda: llm_config._llm.complete(prompt)
+                            executor, lambda: asyncio.run(llm_config._llm(prompt))
                         )
                 
-                project_summary = result.text.strip()
+                project_summary = result.strip()
                 
                 required_sections = [
                     "PROJECT OVERVIEW",
@@ -1543,14 +1513,15 @@ async def generate_requirements_for_file_whole(file_path: str, base_dir: str, la
             requirements_text = await _generate_medium_file_requirements(content, file_path, language, total_tokens)
         else:
             requirements_text = await _generate_large_file_requirements(content, file_path, language, total_tokens)
-        
+
         # Wait for dependencies to complete
         dependencies = await dependencies_task
-        
+
         # Add dependencies to requirements text
         dep_text = _format_dependencies(dependencies)
         requirements_text += f"\n\nDependent Files\n{dep_text}"
-        
+
+        # Return only the raw LLM output as requirements (no structured JSON)
         return FileRequirements(
             relative_path=os.path.relpath(file_path, base_dir),
             file_name=os.path.basename(file_path),
@@ -1570,17 +1541,23 @@ async def generate_requirements_for_file_whole(file_path: str, base_dir: str, la
 
 
 async def _store_in_vector_db_async(content: str, file_path: str, language: str, base_dir: str):
-    """Store content in vector database asynchronously without blocking main processing"""
+    """Store content in vector database asynchronously without blocking main processing, with detailed logging and diagnostics."""
     try:
-        # Only chunk if content is large enough to warrant it
+        from app.services.vector_store_service import PgVectorStoreService, VectorStoreService
+        logger.info(f"[EMBED] Storing file: {file_path} (lang: {language})")
+        if isinstance(vector_store, PgVectorStoreService):
+            logger.info(f"[EMBED] Clearing previous embeddings for Postgres vector store.")
+            vector_store.clear_embeddings()
+        # Chunking
         if count_tokens(content) > 2000:
             chunks = await split_into_chunks(content, language, file_path)
         else:
-            # For smaller files, store as single chunk
+            # Always emit at least one chunk
             chunks = [(content, 1, content.count('\n') + 1)]
-        
+        logger.info(f"[EMBED] File {file_path} split into {len(chunks)} chunk(s)")
         documents = []
         for i, (chunk, start_line, end_line) in enumerate(chunks):
+            logger.info(f"[EMBED] Preparing chunk {i+1}/{len(chunks)} for {file_path}: lines {start_line}-{end_line}, tokens={count_tokens(chunk)}")
             documents.append({
                 "content": chunk,
                 "metadata": {
@@ -1592,16 +1569,21 @@ async def _store_in_vector_db_async(content: str, file_path: str, language: str,
                     "chunk_index": i
                 }
             })
-        
         # Store in vector database
-        await vector_store.add_documents(documents)
+        try:
+            await vector_store.add_documents(documents)
+            logger.info(f"[EMBED] Successfully stored {len(documents)} chunk(s) for {file_path}")
+        except Exception as embed_exc:
+            logger.error(f"[EMBED] Error storing chunks for {file_path}: {embed_exc}")
         # Save only if using local FAISS vector store
-        from app.services.vector_store_service import VectorStoreService
         if isinstance(vector_store, VectorStoreService) and len(documents) > 10:
-            vector_store.save(VECTOR_STORE_DIR)
-            
+            try:
+                vector_store.save(VECTOR_STORE_DIR)
+                logger.info(f"[EMBED] Vector store saved after storing {file_path}")
+            except Exception as save_exc:
+                logger.error(f"[EMBED] Error saving vector store after {file_path}: {save_exc}")
     except Exception as e:
-        logger.error(f"Failed to store chunks in vector store for {file_path}: {str(e)}")
+        logger.error(f"[EMBED] Failed to store chunks in vector store for {file_path}: {str(e)}")
 
 
 async def _extract_dependencies_async(file_path: str, content: str, language: str, base_dir: str):
@@ -1628,197 +1610,177 @@ async def _extract_dependencies_async(file_path: str, content: str, language: st
         return []
 
 
+def _normalize_header(header):
+    """Normalize section headers for flexible matching."""
+    header = header.lower().strip()
+    header = header.replace('functionality', 'functionalities')
+    header = header.replace('key functionality', 'key functionalities')
+    header = header.replace('dependent file', 'dependent files')
+    header = header.replace('use-case', 'use case')
+    return header
+
+REQUIRED_SECTIONS = [
+    'overview',
+    'objective',
+    'use case',
+    'key functionalities',
+    'workflow summary',
+    'dependent files'
+]
+
+# Flexible section parsing
+def _parse_sections(text):
+    """Parse LLM output into sections, allowing for minor header variations and extra commentary."""
+    sections = {}
+    current = None
+    lines = text.splitlines()
+    for line in lines:
+        norm = _normalize_header(line)
+        for req in REQUIRED_SECTIONS:
+            if norm.startswith(req):
+                current = req
+                sections[current] = []
+                break
+        else:
+            if current:
+                sections[current].append(line)
+    # Join section lines
+    for k in sections:
+        sections[k] = '\n'.join(sections[k]).strip()
+    return sections
+
+# Update validation to accept partial/variant outputs
+
+def _validate_and_format_requirements(req_text: str, file_path: str, language: str, rules_summary: str) -> str:
+    """Validate and format LLM-generated requirements. Always return all required sections, filling with a file-specific explanation if missing."""
+    sections = _parse_sections(req_text)
+    formatted = []
+    for req in REQUIRED_SECTIONS:
+        content = sections.get(req, '').strip()
+        # If LLM returned an error message, replace with explanation
+        if content.startswith("Error: LLM failed") or content.startswith("No business logic detected") or not content or len(content) < 10:
+            if req == 'dependent files':
+                content = 'No dependencies detected.'
+            elif req == 'overview' and rules_summary:
+                content = rules_summary
+            else:
+                # File-specific fallback explanation
+                content = (f"No explicit business logic was detected in the {os.path.basename(file_path)} {language} file for the '{req.title()}' section. "
+                           f"This may be because the file primarily contains UI components, configuration, or utility code, or lacks business rules, workflows, or domain logic. "
+                           f"If this is a React component or similar, the file may focus on rendering or wiring rather than business processes.")
+        formatted.append(f"{req.title()}\n{content}\n")
+    return '\n'.join(formatted)
+
+
+# Add logging for prompt and output
+async def _call_llm_with_logging(prompt, llm_func, file_path, attempt):
+    logger = logging.getLogger("analysis_service")
+    logger.debug(f"Prompt for {file_path} (attempt {attempt}):\n{prompt[:1000]}")
+    output = await llm_func(prompt)
+    logger.debug(f"Raw LLM output for {file_path} (attempt {attempt}):\n{output[:2000]}")
+    return output
+
+# Emergency prompt for stubborn files
+EMERGENCY_PROMPT = """
+You must output all five sections: Overview, Objective, Use Case, Key Functionalities, Workflow Summary, and Dependent Files. Each section must have at least 3 sentences. Reference every function, class, and comment in the file. Do not return generic or placeholder text. If you cannot find business logic, explain why for each section. Do not include any values or code, just pure business logic.
+"""
+
+# Special handling for small/script files
+SMALL_FILE_PROMPT = """
+This is a small or script-like file. Describe its purpose and logic in detail, referencing any operations, variables, or comments. Output all five sections as above.
+"""
+
+# Update requirements generation to use new logic
 async def _generate_small_file_requirements(content: str, file_path: str, language: str) -> str:
-    """Generate requirements for small files using templates"""
-    content_hash = _hash_content(content)
     rules_detected = await detect_business_rules(content, language)
     rules_summary = (
         "\n".join([f"Detected {rule['domain']} rule ({rule['source']}): {rule['description']}" 
                   for rule in rules_detected])
         if rules_detected else ""
     )
-    
-    with log_lock:
-        logger.debug(f"Used small-file template for {file_path} (hash: {content_hash})")
-    
-    if language.lower() in ['javascript', 'jsx', 'js']:
-        return (
-            f"Overview\nConfiguration file for {os.path.basename(file_path)} in a frontend application. {rules_summary}\n\n"
-            f"Objective\nTo define settings or utilities for the application.\n\n"
-            f"Use Case\nUsed during application initialization or runtime for UI setup.\n\n"
-            f"Key Functionalities\n1. Configuration: Defines application settings.\n\n2. Utility Support: Provides helper functions.\n\n"
-            f"Workflow Summary\nIntegrates with frontend framework for setup."
-        )
-    elif language.lower() in ["excel", "vba"]:
-        # Enhanced VBA/Excel processing similar to first file
-        logic_summary = summarize_excel_vba_logic(content)
-        # Generate a business narrative summary from the extracted logic
-        business_narrative = await narrative_business_logic_summary(logic_summary, file_path)
-        
-        # Format key_functionalities as numbered points with blank lines
-        key_functionalities = business_narrative['key_functionalities']
-        if isinstance(key_functionalities, list):
-            formatted_key_funcs = [f"{i+1}. {func}" for i, func in enumerate(key_functionalities)]
-            key_functionalities = "\n\n".join(formatted_key_funcs)
-        elif isinstance(key_functionalities, str) and key_functionalities.startswith("- "):
-            # Handle fallback case where key_functionalities is a string with bullet points
-            funcs = [f.strip("- ") for f in key_functionalities.split("\n") if f.strip().startswith("- ")]
-            formatted_key_funcs = [f"{i+1}. {func}" for i, func in enumerate(funcs)]
-            key_functionalities = "\n\n".join(formatted_key_funcs)
-        
-        return (
-            f"Overview\n{business_narrative['overview']}\n\n"
-            f"Objective\n{business_narrative['objective']}\n\n"
-            f"Use Case\n{business_narrative['use_case']}\n\n"
-            f"Key Functionalities\n{key_functionalities}\n\n"
-            f"Workflow Summary\n{business_narrative['workflow']}"
-        )
-    # .NET (C#) code files: Use LLM-powered chunk-based requirements generation (same as Python)
-    elif language.lower() in ["c#", "cs"] or file_path.lower().endswith(".cs"):
-        # Use the same chunk-based LLM analysis as Python
-        requirements = await generate_requirements_for_chunk(content, 0, language)
-        return requirements
-    # .NET Project/config files
-    elif file_path.lower().endswith(('.csproj', '.sln', '.json', '.yml', '.yaml', '.http')):
-        from app.utils.dotnet_parser import summarize_dotnet_config
-        config_summary = summarize_dotnet_config(content, file_path)
-        return config_summary
-    # Angular code files (TypeScript, TSX, HTML): Use LLM-powered chunk-based requirements generation (same as Python/C#)
-    elif language.lower() in ["typescript", "ts", "tsx"] or file_path.lower().endswith((".ts", ".tsx", ".html")):
-        requirements = await generate_requirements_for_chunk(content, 0, language)
-        return requirements
-
-    else:
-        return (
-            f"Overview\nUtility file for {os.path.basename(file_path)}. {rules_summary}\n\n"
-            f"Objective\nTo provide supporting functions.\n\n"
-            f"Use Case\nSupports general business operations.\n\n"
-            f"Key Functionalities\n1. Basic Utilities: Provides helper functions.\n\n2. Support Functions: Assists operations.\n\n"
-            f"Workflow Summary\nSupports general business workflow."
-        )
-
+    prompt = SMALL_FILE_PROMPT + "\n" + content
+    # First attempt
+    output1 = await _call_llm_with_logging(prompt, llm_config._llm, file_path, 1)
+    reqs1 = _validate_and_format_requirements(output1, file_path, language, rules_summary)
+    if not reqs1.startswith("Limited analysis"):
+        return reqs1
+    # Second attempt: more forceful
+    prompt2 = prompt + "\nBe more detailed. Reference every function, class, and comment."
+    output2 = await _call_llm_with_logging(prompt2, llm_config._llm, file_path, 2)
+    reqs2 = _validate_and_format_requirements(output2, file_path, language, rules_summary)
+    if not reqs2.startswith("Limited analysis"):
+        return reqs2
+    # Third attempt: emergency prompt
+    prompt3 = EMERGENCY_PROMPT + "\n" + content
 
 async def _generate_medium_file_requirements(content: str, file_path: str, language: str, total_tokens: int) -> str:
-    """Generate requirements for medium-sized files using LLM"""
-    # Truncate if necessary
+    """Hybrid RAG: Try direct LLM, fallback to RAG-augmented prompt for medium files"""
+    from app.utils.llm_quality import is_generic_llm_output
+    logger = logging.getLogger("analysis_service")
     if total_tokens > MAX_SAFE_TOKENS // 2:
         content = content[:int(len(content) * MAX_SAFE_TOKENS * 0.3 / total_tokens)]
         with log_lock:
             logger.warning(f"Truncated {file_path} to {len(content)} bytes")
-    
-    rules_detected = await detect_business_rules(content, language)
-    rules_summary = (
-        "\n".join([f"Detected {rule['domain']} rule ({rule['source']}): {rule['description']}" 
-                  for rule in rules_detected])
-        if rules_detected else ""
+    # 1. Fast path: Direct LLM
+    prompt = STRICT_SECTION_PROMPT + "\n" + content
+    output = await _call_llm_with_logging(prompt, llm_config._llm, file_path, 1, max_tokens=1000)
+    logger.debug(f"[RAW LLM OUTPUT][{file_path}][direct]: {output[:1000]}")
+    if not is_generic_llm_output(output):
+        logger.info(f"[HYBRID RAG] Used direct LLM output for {file_path}")
+        return output
+    # 2. Fallback: RAG-augmented
+    try:
+        rag_context_data = await vector_store.get_related_context(query=content, k=3)
+        rag_context = rag_context_data.get("context", "")
+    except Exception as e:
+        logger.error(f"[HYBRID RAG] Retrieval failed for {file_path}: {e}")
+        rag_context = ""
+    rag_prompt = (
+        STRICT_SECTION_PROMPT +
+        f"\n\nHere is related context from the project:\n---\n{rag_context}\n---\n" +
+        content
     )
-    
-    prompt = (
-        f"Act as a senior business analyst reviewing a {language} source file.\n"
-        f"Generate a comprehensive business requirements document in plain text, avoiding markdown symbols.\n"
-        f"Do NOT use the phrase 'this file' or 'this code'. "
-        f"If the content contains organization-specific logic or calculations (e.g., proprietary formulas or business rules), "
-        f"generalize them without revealing sensitive details. For example, instead of specifying an exact calculation, "
-        f"say 'performs proprietary calculations based on internal rules.'\n"
-        f"Use the following detected rules for context:\n{rules_summary}\n"
-        f"Provide exactly five sections: Overview, Objective, Use Case, Key Functionalities, and Workflow Summary, "
-        f"separated by two newlines.\n\n"
-        f"Overview\nDescribe the file's purpose and role (50-100 words).\n\n"
-        f"Objective\nState the primary business goal (1-2 sentences).\n\n"
-        f"Use Case\nOutline business scenarios (2-3 sentences).\n\n"
-        f"Key Functionalities\nList 2-5 capabilities, each on a new line, numbered (e.g., 1., 2.), followed by a blank line.\n\n"
-        f"Workflow Summary\nDescribe the business process (2-3 sentences).\n\n"
-        f"Analyze:\n```{language}\n{content}\n```"
-    )
-
-    content_hash = _hash_content(content)
-    async with llm_semaphore:
-        try:
-            async with asyncio.timeout(60):
-                with ThreadPoolExecutor(max_workers=1) as executor:
-                    result = await asyncio.get_event_loop().run_in_executor(
-                        executor, lambda: llm_config._llm.complete(prompt)
-                    )
-            
-            req_text = result.text.strip()
-            with log_lock:
-                logger.debug(f"Raw LLM output for {file_path} (hash: {content_hash}): {req_text[:200]}...")
-            
-            req_text = re.sub(r'\n\s*\n+', '\n\n', req_text)
-            req_text = re.sub(r'this file|this code', 'the content', req_text, flags=re.IGNORECASE)
-            
-            # Validate and format the response
-            return _validate_and_format_requirements(req_text, file_path, language, rules_summary)
-            
-        except asyncio.TimeoutError:
-            with log_lock:
-                logger.error(f"LLM timed out for {file_path}")
-            return _create_fallback_requirements_text(file_path, language, "timeout", rules_summary)
-        except ValueError as ve:
-            with log_lock:
-                logger.error(f"Value error during LLM processing for {file_path}: {ve}")
-            return _create_fallback_requirements_text(file_path, language, "invalid data", rules_summary)
-        except Exception as e:
-            with log_lock:
-                logger.error(f"Error during LLM processing for {file_path}: {e}")
-            return _create_fallback_requirements_text(file_path, language, "processing error", rules_summary)
-
+    rag_output = await _call_llm_with_logging(rag_prompt, llm_config._llm, file_path, 2, max_tokens=1000)
+    logger.debug(f"[RAW LLM OUTPUT][{file_path}][RAG]: {rag_output[:1000]}")
+    logger.info(f"[HYBRID RAG] Used RAG-augmented output for {file_path}")
+    return rag_output
 
 async def _generate_large_file_requirements(content: str, file_path: str, language: str, total_tokens: int) -> str:
-    """Generate requirements for large files using chunking strategy"""
-    try:
-        with log_lock:
-            logger.debug(f"Splitting {file_path} into chunks due to high token count: {total_tokens}")
-        chunks = await split_into_chunks(content, language, file_path)
-        with log_lock:
-            logger.debug(f"Generated {len(chunks)} chunks for {file_path}")
-        
-        requirements_list = []
-        for i, (chunk_content, start_line, end_line) in enumerate(chunks):
-            try:
-                req = await generate_requirements_for_chunk(chunk_content, i, language)
-                requirements_list.append(req)
-                if (i + 1) % 5 == 0 or i + 1 == len(chunks):
-                    with log_lock:
-                        logger.info(f"Processed chunk {i+1}/{len(chunks)} for {file_path}")
-            except Exception as e:
-                with log_lock:
-                    logger.error(f"Error processing chunk {i+1} for {file_path}: {e}")
-                requirements_list.append(_create_chunk_fallback(i + 1, file_path))
-        
-        # Combine all requirements
-        combined_req = await combine_requirements(requirements_list, language)
-        return combined_req
-        
-    except MemoryError as me:
-        with log_lock:
-            logger.error(f"Memory error during chunking for {file_path}: {me}")
-        return _create_fallback_requirements_text(file_path, language, "memory constraints", "")
-    except Exception as e:
-        with log_lock:
-            logger.error(f"Chunking failed for {file_path}: {str(e)}")
-        return _create_fallback_requirements_text(file_path, language, "processing error", "")
-
-
-# Helper functions
-def _create_fallback_requirements(file_path: str, base_dir: str, language: str, error_type: str) -> FileRequirements:
-    """Create fallback requirements when processing fails"""
-    req_text = (
-        f"Overview\nFailed to process {os.path.basename(file_path)} due to {error_type}.\n\n"
-        f"Objective\nTo support intended {language.lower()} business functions.\n\n"
-        f"Use Case\nIntended {language.lower()} business operations.\n\n"
-        f"Key Functionalities\n1. Intended Functionality: Expected to provide core features.\n\n2. Support Functions: Assists operations.\n\n"
-        f"Workflow Summary\nExpected to integrate with {language.lower()} system workflows.\n\n"
-        f"Dependent Files\nNo dependencies detected."
-    )
-    
-    return FileRequirements(
-        relative_path=os.path.relpath(file_path, base_dir),
-        file_name=os.path.basename(file_path),
-        requirements=req_text,
-        dependencies=[]
-    )
-
+    """Chunk large files and send each chunk to LLM; use hybrid RAG for each chunk; concatenate outputs"""
+    from app.utils.llm_quality import is_generic_llm_output
+    logger = logging.getLogger("analysis_service")
+    with log_lock:
+        logger.debug(f"Splitting {file_path} into chunks due to high token count: {total_tokens}")
+    chunks = await split_into_chunks(content, language, file_path)
+    with log_lock:
+        logger.debug(f"Generated {len(chunks)} chunks for {file_path}")
+    requirements_list = []
+    for i, (chunk_content, start_line, end_line) in enumerate(chunks):
+        # Hybrid logic per chunk
+        prompt = STRICT_SECTION_PROMPT + "\n" + chunk_content
+        output = await _call_llm_with_logging(prompt, llm_config._llm, f"{file_path}::chunk{i+1}", 1, max_tokens=1000)
+        logger.debug(f"[RAW LLM OUTPUT][{file_path}][chunk {i+1}][direct]: {output[:1000]}")
+        if not is_generic_llm_output(output):
+            logger.info(f"[HYBRID RAG][chunk {i+1}] Used direct LLM output for {file_path}")
+            requirements_list.append(output)
+            continue
+        # Fallback: RAG-augmented
+        try:
+            rag_context_data = await vector_store.get_related_context(query=chunk_content, k=3)
+            rag_context = rag_context_data.get("context", "")
+        except Exception as e:
+            logger.error(f"[HYBRID RAG][chunk {i+1}] Retrieval failed for {file_path}: {e}")
+            rag_context = ""
+        rag_prompt = (
+            STRICT_SECTION_PROMPT +
+            f"\n\nHere is related context from the project:\n---\n{rag_context}\n---\n" +
+            chunk_content
+        )
+        rag_output = await _call_llm_with_logging(rag_prompt, llm_config._llm, f"{file_path}::chunk{i+1}", 2, max_tokens=1000)
+        logger.debug(f"[RAW LLM OUTPUT][{file_path}][chunk {i+1}][RAG]: {rag_output[:1000]}")
+        logger.info(f"[HYBRID RAG][chunk {i+1}] Used RAG-augmented output for {file_path}")
+        requirements_list.append(rag_output)
+    return '\n\n'.join(requirements_list)
 
 def _create_fallback_requirements_text(file_path: str, language: str, error_type: str, rules_summary: str) -> str:
     """Create fallback requirements text"""
@@ -1828,40 +1790,6 @@ def _create_fallback_requirements_text(file_path: str, language: str, error_type
         f"Use Case\nGeneral {language.lower()} business processes.\n\n"
         f"Key Functionalities\n1. Basic Processing: Performs core tasks.\n\n2. Support Functions: Assists operations.\n\n"
         f"Workflow Summary\nIntegrates with {language.lower()} system workflow."
-    )
-
-
-def _validate_and_format_requirements(req_text: str, file_path: str, language: str, rules_summary: str) -> str:
-    """Validate and format LLM-generated requirements"""
-    sections = re.split(r'\n\n(?=Overview|Objective|Use Case|Key Functionalities|Workflow Summary|Dependent Files)', req_text)
-    section_dict = {}
-    
-    for section in sections:
-        for header in ['Overview', 'Objective', 'Use Case', 'Key Functionalities', 'Workflow Summary', 'Dependent Files']:
-            if section.startswith(header):
-                section_dict[header] = section[len(header):].strip()
-                break
-
-    # Validate required sections
-    if len(section_dict) < 5 or not all(section_dict.get(h) for h in ['Overview', 'Objective', 'Use Case', 'Key Functionalities', 'Workflow Summary']):
-        with log_lock:
-            logger.warning(f"Invalid file requirements for {file_path}. Using fallback.")
-        return _create_fallback_requirements_text(file_path, language, "invalid format", rules_summary)
-    
-    # Format Key Functionalities properly
-    if 'Key Functionalities' in section_dict:
-        func_lines = section_dict['Key Functionalities'].split('\n')
-        formatted_funcs = [line.strip() for line in func_lines if re.match(r'\d+\.\s', line)]
-        if not formatted_funcs:
-            formatted_funcs = ["1. Basic Processing: Supports core tasks.", "2. Support Functions: Assists operations."]
-        section_dict['Key Functionalities'] = '\n\n'.join(formatted_funcs)
-    
-    return (
-        f"Overview\n{section_dict.get('Overview', 'Summary unavailable.')}. {rules_summary}\n\n"
-        f"Objective\n{section_dict.get('Objective', 'To support core functionality.')}\n\n"
-        f"Use Case\n{section_dict.get('Use Case', 'Supports business operations.')}\n\n"
-        f"Key Functionalities\n{section_dict.get('Key Functionalities', '1. Basic Processing: Supports core tasks.\n\n2. Support Functions: Assists operations.')}\n\n"
-        f"Workflow Summary\n{section_dict.get('Workflow Summary', 'Integrates with system workflow.')}"
     )
 
 
@@ -1890,7 +1818,7 @@ def _create_chunk_fallback(chunk_num: int, file_path: str) -> str:
 
 
 async def generate_requirements_for_files_whole(directory: str) -> FilesRequirements:
-    """Optimized batch processing of files"""
+    """Optimized batch processing of files with detailed summary logging for embedding/chunking."""
     logger.info(f"Starting requirements generation for {directory}")
     
     try:
@@ -1914,6 +1842,7 @@ async def generate_requirements_for_files_whole(directory: str) -> FilesRequirem
 
         files_requirements = []
         completed_count = 0
+        chunking_stats = {"total_files": total_files, "total_chunks": 0, "files": []}
 
         # Process files in smaller batches with controlled concurrency
         batch_size = min(BATCH_SIZE, 6)  # Limit batch size for better control
@@ -1931,14 +1860,23 @@ async def generate_requirements_for_files_whole(directory: str) -> FilesRequirem
             batch_results = await asyncio.gather(*tasks, return_exceptions=True)
             
             for i, result in enumerate(batch_results):
+                file_path, language = batch[i]
                 if isinstance(result, Exception):
-                    logger.error(f"Error processing {batch[i][0]}: {result}")
+                    logger.error(f"Error processing {file_path}: {result}")
                     # Create fallback requirement
-                    file_path, language = batch[i]
                     fallback = _create_fallback_requirements(file_path, directory, language, "processing error")
                     files_requirements.append(fallback)
+                    chunking_stats["files"].append({"file": file_path, "chunks": 0, "status": "error", "reason": str(result)})
                 else:
                     files_requirements.append(result)
+                    # Try to inspect chunking/embedding for this file
+                    try:
+                        # If requirements object has chunk info, log it
+                        if hasattr(result, "requirements") and hasattr(result, "file_name"):
+                            logger.info(f"[SUMMARY] File {result.file_name} processed.")
+                        chunking_stats["files"].append({"file": file_path, "chunks": "?", "status": "ok"})
+                    except Exception as stat_exc:
+                        logger.warning(f"[SUMMARY] Could not inspect chunking for {file_path}: {stat_exc}")
             
             completed_count += len(batch)
             progress = completed_count / total_files * 100
@@ -1968,9 +1906,330 @@ async def generate_requirements_for_files_whole(directory: str) -> FilesRequirem
         except Exception as e:
             logger.error(f"Failed to save vector store: {e}")
 
+        # Log summary of chunking/embedding for diagnostics
+        logger.info(f"[SUMMARY] Embedding/chunking stats: {json.dumps(chunking_stats, indent=2)}")
         logger.info(f"Completed requirements generation for {len(files_requirements)} files with project summary and {len(graphs)} graphs")
         return files_requirements_obj
         
     except Exception as e:
         logger.error(f"Error processing directory {directory}: {str(e)}")
         return FilesRequirements(files=[])
+
+def extract_json_from_llm_output(output_text):
+    """Try to extract a JSON array from LLM output, even if it's inside a code block or not at the start."""
+    import json, re
+    # Try to find a code block with json
+    match = re.search(r"```json\s*([\s\S]*?)\s*```", output_text)
+    if match:
+        json_str = match.group(1).strip()
+        try:
+            return json.loads(json_str)
+        except Exception:
+            pass
+    # Try to find any code block
+    match = re.search(r"```[\w]*\s*([\s\S]*?)\s*```", output_text)
+    if match:
+        json_str = match.group(1).strip()
+        try:
+            return json.loads(json_str)
+        except Exception:
+            pass
+    # Try to find the first [ ... ]
+    match = re.search(r"\[.*\]", output_text, re.DOTALL)
+    if match:
+        json_str = match.group(0)
+        try:
+            return json.loads(json_str)
+        except Exception:
+            pass
+    # Try to parse the whole output
+    try:
+        return json.loads(output_text)
+    except Exception:
+        pass
+    return None
+
+# Update: Strict section enforcement, no default/fallback content, higher max_tokens, and forceful prompts
+REQUIRED_SECTIONS = [
+    'overview',
+    'objective',
+    'use case',
+    'key functionalities',
+    'workflow summary',
+    'dependent files'
+]
+
+STRICT_SECTION_PROMPT = """
+You must output all six sections: Overview, Objective, Use Case, Key Functionalities, Workflow Summary, and Dependent Files. Each section must be non-empty, file-specific, and reference every function, class, and comment in the file. Do not return generic or placeholder text. If you cannot find business logic, explain why for that section. Do not include any values or code, just pure business logic. Return only the six sections, no extra commentary.
+"""
+
+async def _call_llm_with_logging(prompt, llm_func, file_path, attempt, max_tokens=1000):
+    logger = logging.getLogger("analysis_service")
+    logger.debug(f"Prompt for {file_path} (attempt {attempt}):\n{prompt[:1000]}")
+    output = await llm_func(prompt, max_tokens=max_tokens)
+    logger.debug(f"Raw LLM output for {file_path} (attempt {attempt}):\n{output[:2000]}")
+    return output
+
+# Update requirements generation to use strict prompt and no fallback
+async def _generate_small_file_requirements(content: str, file_path: str, language: str) -> str:
+    rules_detected = await detect_business_rules(content, language)
+    rules_summary = (
+        "\n".join([f"Detected {rule['domain']} rule ({rule['source']}): {rule['description']}" 
+                  for rule in rules_detected])
+        if rules_detected else ""
+    )
+    prompt = STRICT_SECTION_PROMPT + f"\nDetected rules for context:\n{rules_summary}\n\n{content}"
+    # First attempt
+    output1 = await _call_llm_with_logging(prompt, llm_config._llm, file_path, 1, max_tokens=1000)
+    reqs1 = _parse_sections(output1)
+    if all(req in reqs1 and reqs1[req] and len(reqs1[req].strip()) > 10 for req in REQUIRED_SECTIONS):
+        return '\n\n'.join([f"{req.title()}\n{reqs1[req].strip()}" for req in REQUIRED_SECTIONS])
+    # Second attempt: more forceful
+    prompt2 = prompt + "\nBe more detailed. Reference every function, class, and comment."
+    output2 = await _call_llm_with_logging(prompt2, llm_config._llm, file_path, 2, max_tokens=1000)
+    reqs2 = _parse_sections(output2)
+    if all(req in reqs2 and reqs2[req] and len(reqs2[req].strip()) > 10 for req in REQUIRED_SECTIONS):
+        return '\n\n'.join([f"{req.title()}\n{reqs2[req].strip()}" for req in REQUIRED_SECTIONS])
+    # Third attempt: strictest prompt
+    prompt3 = STRICT_SECTION_PROMPT + f"\n{content}"
+    output3 = await _call_llm_with_logging(prompt3, llm_config._llm, file_path, 3, max_tokens=1000)
+    reqs3 = _parse_sections(output3)
+    if all(req in reqs3 and reqs3[req] and len(reqs3[req].strip()) > 10 for req in REQUIRED_SECTIONS):
+        return '\n\n'.join([f"{req.title()}\n{reqs3[req].strip()}" for req in REQUIRED_SECTIONS])
+    logger = logging.getLogger("analysis_service")
+    logger.warning(f"LLM failed to generate all required sections for {file_path} after 3 attempts.")
+    return f"Error: LLM failed to generate all required sections for {file_path}. Please check the file content or try again."
+
+# File-type-specific example outputs
+EXAMPLES = {
+    'python': '''
+Overview
+This Python file implements a Flask-based REST API for managing employee records. It defines endpoints for creating, reading, updating, and deleting employee data, and integrates with a PostgreSQL database using SQLAlchemy. The file includes input validation, error handling, and logging for all operations.
+
+Objective
+To provide a secure and efficient API for CRUD operations on employee records, supporting integration with HR systems and internal dashboards.
+
+Use Case
+Used by HR staff and automated scripts to manage employee data, synchronize records with payroll systems, and generate reports for compliance and auditing.
+
+Key Functionalities
+1. Employee CRUD Operations: Endpoints for creating, reading, updating, and deleting employee records in the database.
+
+2. Input Validation: Ensures all required fields are present and valid before processing requests.
+
+3. Error Handling: Returns clear error messages and appropriate HTTP status codes for invalid operations.
+
+4. Logging: Records all API requests and errors for auditing and debugging purposes.
+
+Workflow Summary
+The API receives HTTP requests, validates input, performs database operations, handles errors, and logs all activities. It supports integration with other business systems and ensures data integrity and security.
+
+Dependent Files
+No dependencies detected.''',
+    'angular': '''
+Overview
+This Angular file defines a component for managing user profiles, including form validation, data binding, and integration with backend services. It uses Angular decorators to specify component metadata and leverages services for HTTP communication.
+
+Objective
+To provide a reusable and interactive UI component for user profile management, supporting both data entry and editing workflows.
+
+Use Case
+Used in the user management module to allow administrators and users to view and update profile information, with real-time validation and feedback.
+
+Key Functionalities
+1. Data Binding: Synchronizes form fields with component state and backend data.
+
+2. Form Validation: Implements custom and built-in validators for user input.
+
+3. Service Integration: Communicates with backend APIs to fetch and update user data.
+
+4. UI Feedback: Provides real-time feedback and error messages to users.
+
+Workflow Summary
+The component initializes by loading user data, sets up form controls, handles user input, validates data, and submits changes to the backend. It updates the UI based on success or error responses.
+
+Dependent Files
+No dependencies detected.''',
+    'csharp': '''
+Overview
+This C# file implements a service class for processing payroll data in a .NET application. It defines methods for calculating salaries, applying deductions, and generating payroll reports.
+
+Objective
+To automate payroll processing and ensure accurate salary calculations in compliance with company policies.
+
+Use Case
+Used by HR and finance teams to process employee payroll, generate payslips, and maintain payroll records.
+
+Key Functionalities
+1. Salary Calculation: Computes gross and net salaries based on employee data and company rules.
+
+2. Deduction Handling: Applies tax, insurance, and other deductions as per regulations.
+
+3. Report Generation: Produces payroll reports for management and compliance.
+
+Workflow Summary
+The service retrieves employee data, performs calculations, applies deductions, and generates reports. It integrates with other modules for data consistency.
+
+Dependent Files
+No dependencies detected.''',
+    'sql': '''
+Overview
+This SQL file defines stored procedures and views for managing sales transactions in the database. It includes logic for inserting, updating, and querying sales records.
+
+Objective
+To centralize and optimize sales data management, ensuring data integrity and efficient reporting.
+
+Use Case
+Used by sales and analytics teams to record transactions, update sales data, and generate sales performance reports.
+
+Key Functionalities
+1. Insert Procedure: Adds new sales records to the database.
+
+2. Update Procedure: Modifies existing sales records based on business rules.
+
+3. Reporting Views: Provides aggregated sales data for analysis.
+
+Workflow Summary
+The procedures and views interact with sales tables, enforce business rules, and support reporting needs. They are invoked by application logic and scheduled jobs.
+
+Dependent Files
+No dependencies detected.''',
+    'html': '''
+Overview
+This HTML file defines the structure and layout for the user dashboard page, including navigation, content sections, and embedded widgets. It uses semantic HTML tags and integrates with CSS and JavaScript for styling and interactivity.
+
+Objective
+To provide a user-friendly and accessible dashboard interface for end users, supporting navigation and data visualization.
+
+Use Case
+Used as the main entry point for users to access dashboard features, view key metrics, and interact with widgets.
+
+Key Functionalities
+1. Navigation Bar: Provides links to main sections of the application.
+
+2. Content Sections: Organizes dashboard widgets and information panels.
+
+3. Widget Embedding: Integrates charts and tables for data visualization.
+
+Workflow Summary
+The HTML structure is loaded by the browser, styled by CSS, and enhanced by JavaScript. It supports dynamic updates and user interactions.
+
+Dependent Files
+No dependencies detected.''',
+    'excel': '''
+Overview
+This Excel macro-enabled file automates the calculation of project costs and generates summary reports. It includes VBA macros for data validation, cost adjustments, and summary table generation across multiple worksheets.
+
+Objective
+To streamline project cost calculations and reporting by automating data entry, validation, and summary generation using macros.
+
+Use Case
+Used by project managers and finance teams to quickly calculate costs, apply adjustments, and produce summary reports for internal review and external audits.
+
+Key Functionalities
+1. Macro-Driven Cost Calculation: Automates the calculation of project costs using VBA macros, including adjustments for tax, discount, and overhead.
+
+2. Data Validation: Checks for missing or invalid data before calculations proceed, ensuring data quality.
+
+3. Summary Table Generation: Compiles results from multiple worksheets into a summary table for reporting.
+
+Workflow Summary
+The macro processes input data, validates entries, performs calculations, and generates a summary report. It handles errors and missing data, ensuring accurate and reliable outputs.
+
+Dependent Files
+No dependencies detected.''',
+    'config': '''
+Overview
+This JSON configuration file defines application settings, environment variables, and dependency references for the project. It is used to control runtime behavior and manage external integrations.
+
+Objective
+To centralize configuration management, making it easy to update settings and dependencies without modifying code.
+
+Use Case
+Used by developers and DevOps teams to manage environment-specific settings, API keys, and service endpoints.
+
+Key Functionalities
+1. Environment Settings: Defines variables for different deployment environments (dev, staging, prod).
+
+2. Dependency References: Lists external services and libraries required by the application.
+
+3. Feature Flags: Enables or disables features based on configuration.
+
+Workflow Summary
+The application loads this configuration at startup, applying settings and initializing dependencies as specified. Changes to this file affect application behavior without code changes.
+
+Dependent Files
+No dependencies detected.'''
+}
+
+# Helper to get file type for prompt selection
+FILE_TYPE_MAP = {
+    '.py': 'python', '.js': 'python', '.jsx': 'python', '.ts': 'angular', '.tsx': 'angular', '.java': 'python', '.cs': 'csharp',
+    '.sql': 'sql', '.html': 'html',
+    '.xlsm': 'excel', '.xlsx': 'excel', '.xls': 'excel',
+    '.json': 'config', '.csproj': 'config', '.sln': 'config', '.yml': 'config', '.yaml': 'config', '.http': 'config'
+}
+
+def get_prompt_example(file_path):
+    _, ext = os.path.splitext(file_path)
+    return EXAMPLES.get(FILE_TYPE_MAP.get(ext.lower(), 'python'), EXAMPLES['python'])
+
+async def _generate_requirements_with_section_completion(content: str, file_path: str, language: str, rules_summary: str) -> str:
+    # Compose prompt as before, but return LLM output as-is, no fallback/validation
+    _, ext = os.path.splitext(file_path)
+    technical_context = ''
+    if ext.lower() in ['.ts', '.html']:
+        technical_context = summarize_angular_file(content, file_path)
+    elif ext.lower() in ['.js', '.jsx', '.tsx']:
+        from app.utils.angular_parser import summarize_angular_file
+        technical_context = summarize_angular_file(content, file_path)
+    elif ext.lower() in ['.cs']:
+        from app.utils.dotnet_parser import summarize_csharp_code
+        technical_context = summarize_csharp_code(content)
+    elif ext.lower() in ['.csproj', '.sln', '.json', '.yml', '.yaml', '.http']:
+        from app.utils.dotnet_parser import summarize_dotnet_config
+        technical_context = summarize_dotnet_config(content, file_path)
+    elif ext.lower() == '.sql':
+        try:
+            from app.utils.sql_parser import summarize_sql_file
+            technical_context = summarize_sql_file(content, file_path)
+        except ImportError:
+            technical_context = 'SQL file; summary utility not implemented.'
+    example_output = get_prompt_example(file_path)
+    prompt_base = f"You are a senior business analyst. Carefully review the following {language} file and produce a highly detailed, file-specific business requirements document.\nAnalyze all functions, classes, comments, and business logic. For each section below, provide a content-rich, file-specific explanation based strictly on the actual code and comments.\n- Do NOT use generic, vague, or placeholder statements.\n- If the file is small, expand on every available detail, inferring business purpose, logic, and workflow from names, comments, and code structure.\n- Use the following detected rules for context:\n{rules_summary}\n- Technical context: {technical_context}\n- Your output MUST have six sections: Overview, Objective, Use Case, Key Functionalities, Workflow Summary, Dependent Files, separated by two newlines.\n- Each section must be at least 2-3 sentences, and Key Functionalities must be a numbered list with a blank line between each.\n- Example output:\n{example_output}\n- Return ONLY the six sections, no extra commentary.\n\nAnalyze this file:\n```{language}\n{content}\n```"
+    max_tokens = 1000
+    logger = logging.getLogger("analysis_service")
+    try:
+        response = await _call_llm_with_logging(prompt_base, llm_config._llm, file_path, 1, max_tokens)
+        logger.debug(f"[RAW LLM OUTPUT][{file_path}]: {response[:1000]}")
+        return response
+    except Exception as e:
+        logger.error(f"[LLM ERROR] Exception during LLM requirements for {file_path}: {e}")
+        return ""
+# Use this in all requirements generation functions
+async def _generate_small_file_requirements(content: str, file_path: str, language: str) -> str:
+    from app.utils.llm_quality import is_generic_llm_output
+    logger = logging.getLogger("analysis_service")
+    # 1. Fast path: Direct LLM
+    prompt = STRICT_SECTION_PROMPT + "\n" + content
+    output = await _call_llm_with_logging(prompt, llm_config._llm, file_path, 1, max_tokens=1000)
+    logger.debug(f"[RAW LLM OUTPUT][{file_path}][direct]: {output[:1000]}")
+    if not is_generic_llm_output(output):
+        logger.info(f"[HYBRID RAG] Used direct LLM output for {file_path}")
+        return output
+    # 2. Fallback: RAG-augmented
+    try:
+        rag_context_data = await vector_store.get_related_context(query=content, k=3)
+        rag_context = rag_context_data.get("context", "")
+    except Exception as e:
+        logger.error(f"[HYBRID RAG] Retrieval failed for {file_path}: {e}")
+        rag_context = ""
+    rag_prompt = (
+        STRICT_SECTION_PROMPT +
+        f"\n\nHere is related context from the project:\n---\n{rag_context}\n---\n" +
+        content
+    )
+    rag_output = await _call_llm_with_logging(rag_prompt, llm_config._llm, file_path, 2, max_tokens=1000)
+    logger.debug(f"[RAW LLM OUTPUT][{file_path}][RAG]: {rag_output[:1000]}")
+    logger.info(f"[HYBRID RAG] Used RAG-augmented output for {file_path}")
+    return rag_output

@@ -4,7 +4,7 @@ import numpy as np
 import pickle
 import os
 from app.utils.logger import logger
-from app.config.llm_config import llm_config
+from app.config.bedrock_llm import llm_config
 from datetime import datetime
 import tiktoken
 
@@ -30,6 +30,20 @@ class PgVectorDocument(Base):
     created_at = Column(Float, default=lambda: datetime.utcnow().timestamp())
 
 class PgVectorStoreService:
+    def clear_embeddings(self):
+        """Delete all embeddings from the Postgres vector_documents table."""
+        session = self.Session()
+        try:
+            session.query(PgVectorDocument).delete()
+            session.commit()
+            logger.info("Cleared all embeddings from Postgres vector_documents table.")
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error clearing embeddings: {e}")
+            raise
+        finally:
+            session.close()
+
     def _get_tokenizer(self):
         """Get tokenizer for counting tokens"""
         if not hasattr(self, '_tokenizer') or self._tokenizer is None:
@@ -75,7 +89,7 @@ class PgVectorStoreService:
             pg_url = f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{db}"
         self.engine = create_engine(pg_url)
         self.Session = sessionmaker(bind=self.engine)
-        self.dimension = int(os.getenv('VECTOR_DIM', '3072'))
+        self.dimension = int(os.getenv('VECTOR_DIM', '1024'))
         logger.info(f"[VECTOR STORE] Using embedding dimension: {self.dimension}")
         Base.metadata.create_all(self.engine)
 
@@ -97,11 +111,18 @@ class PgVectorStoreService:
                     chunked_count += len(chunks) - 1
                 for chunk_idx, chunk in enumerate(chunks):
                     try:
-                        embedding = llm_config._embed_model.get_text_embedding(chunk)
+                        # Use correct property for embedding
+                        embedding = llm_config.embed_model.get_text_embedding(chunk)
                         if isinstance(embedding, np.ndarray):
                             embedding = embedding.tolist()
                         if hasattr(self, 'dimension') and len(embedding) != self.dimension:
                             logger.warning(f"Skipping chunk {chunk_idx} of doc {idx}: embedding dimension {len(embedding)} != expected {self.dimension}.")
+                            skipped_count += 1
+                            continue
+                        # Log embedding stats before storing
+
+                        if all(v == 0.0 for v in embedding):
+                            logger.warning(f"[EMBED STORE] All-zero embedding detected for idx={idx} chunk={chunk_idx}, skipping storage.")
                             skipped_count += 1
                             continue
                         embedding_json = json.dumps(embedding)
@@ -126,7 +147,7 @@ class PgVectorStoreService:
             session.close()
 
     def search_sync(self, query: str, k: int = 5, filters: Optional[Dict] = None) -> List[Dict[str, Any]]:
-        from app.config.llm_config import llm_config
+        from app.config.bedrock_llm import llm_config
         token_count = self._count_tokens(query)
         if token_count > self.max_embedding_tokens:
             chunks = self._chunk_text(query, self.max_embedding_tokens)
@@ -179,9 +200,13 @@ class PgVectorStoreService:
                     chunked_count += len(chunks) - 1
                 for chunk_idx, chunk in enumerate(chunks):
                     try:
-                        embedding = await llm_config._embed_model.aget_text_embedding(chunk)
+                        # Use correct property for embedding (async)
+                        embedding = await llm_config.embed_model.aget_text_embedding(chunk)
                         if isinstance(embedding, np.ndarray):
                             embedding = embedding.tolist()
+                        # Check for all-zero embedding
+                        if all(e == 0.0 for e in embedding):
+                            logger.error(f"[ERROR] All-zero embedding for chunk {chunk_idx} of doc {idx}. Chunk content: {repr(chunk)[:200]}")
                         if hasattr(self, 'dimension') and len(embedding) != self.dimension:
                             logger.warning(f"[ASYNC] Skipping chunk {chunk_idx} of doc {idx}: embedding dimension {len(embedding)} != expected {self.dimension}.")
                             skipped_count += 1
@@ -248,7 +273,7 @@ class VectorStoreService:
     def __init__(self):
         self.index = None
         self.documents = []
-        self.dimension = int(os.getenv('VECTOR_DIM', '3072'))  # Default for text-embedding-3-large
+        self.dimension = int(os.getenv('VECTOR_DIM', '1024'))  # Default for Titan v2
         logger.info(f"[VECTOR STORE] Using embedding dimension: {self.dimension}")
         self.metadata_index = {}  # For quick metadata lookups
         self._embedding_dimension_determined = False

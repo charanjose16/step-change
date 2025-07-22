@@ -134,7 +134,7 @@ def get_code_files(directory: str) -> List[Tuple[str, str]]:
             allowed_exts = [
                 '.py', '.js', '.jsx', '.ts', '.tsx', '.java', '.scala', '.rb', '.go', '.cpp', '.c', '.rs', '.kt', '.swift', '.php',
                 '.cs', '.vb', '.fs', '.csproj', '.vbproj', '.fsproj', '.sln',
-                '.json', '.txt', '.xlsx', '.xlsm', '.doc', '.md'
+                '.json', '.txt', '.xlsx', '.xlsm', '.doc', '.md', '.sql', '.html'
             ]
             if not any(file.lower().endswith(ext) for ext in allowed_exts):
                 continue
@@ -174,7 +174,9 @@ def get_file_language(file_path: str) -> str:
         '.kt': 'Kotlin',
         '.swift': 'Swift',
         '.php': 'PHP',
-        '.cs': 'C#'
+        '.cs': 'C#',
+        '.sql': 'SQL',
+        '.html': 'HTML'
     }
     
     _, ext = os.path.splitext(file_path)
