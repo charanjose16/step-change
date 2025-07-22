@@ -15,6 +15,12 @@ const formatRequirementSummary = (text) => {
     const lines = paragraph.split('\n').filter(l => l.trim());
     if (!lines.length) continue;
 
+    // Skip any markdown/LLM-generated Dependent Files section
+    const depFilesHeader = lines[0].match(/^#*\s*Dependent Files/i);
+    // If this is a markdown/LLM Dependent Files list (with - ./ or - filename), skip this paragraph
+    const isDepFilesList = depFilesHeader && lines.some(line => line.match(/^-\s*\.?\/?[\w\/-]+/));
+    if (isDepFilesList) continue;
+
     // Check if paragraph is a numbered list (starts with "1.", "2.", etc.)
     const isNumberedList = lines[0].match(/^\d+\.\s+/);
     if (isNumberedList) {
@@ -33,13 +39,20 @@ const formatRequirementSummary = (text) => {
       }
     }
 
-    // Handle headers (Overview, Objective, Use Case, etc.)
-    if (lines[0].match(/^(Overview|Objective|Use Case|Key Functionalities|Workflow Summary)$/)) {
-      const header = lines[0];
+    // Handle headers (Overview, Objective, Use Case, Key Functionalities, Workflow Summary), accepting Markdown-style and plain headers
+    const headerMatch = lines[0].match(/^#*\s*(Overview|Objective|Use Case|Key Functionalities|Workflow Summary)\s*$/i);
+    if (headerMatch) {
+      const header = headerMatch[1].trim();
       const content = lines.slice(1).join(' ').trim();
       formatted.push(`<h3 class="text-teal-700 text-xl mt-6 mb-3 font-semibold">${header}</h3>`);
       if (content) {
-        formatted.push(`<p class="mb-3 text-sm text-gray-800 leading-relaxed">${content}</p>`);
+        if (header.toLowerCase() === 'workflow summary' && /^1\./.test(content)) {
+          // Split numbered steps into list items
+          const steps = content.split(/\s*\d+\.\s+/).filter(Boolean);
+          formatted.push('<ol class="list-decimal list-inside my-2">' + steps.map(step => `<li class="mb-1 text-sm text-gray-800">${step.trim()}</li>`).join('') + '</ol>');
+        } else {
+          formatted.push(`<p class="mb-3 text-sm text-gray-800 leading-relaxed">${content}</p>`);
+        }
       }
     } else {
       // Regular paragraph with proper spacing and line-height
@@ -98,7 +111,7 @@ export default function RequirementDetailView({
   };
 
   const parseDependentFiles = (text) => {
-    const depSection = text.split('\n\n').find(p => p.startsWith('Dependent Files'));
+    const depSection = text.split('\n\n').find(p => p.trim().startsWith('Dependent Files'));
     if (!depSection) return [];
 
     const lines = depSection
@@ -109,15 +122,21 @@ export default function RequirementDetailView({
     if (!lines.length || lines[0].trim() === 'No dependencies detected.') return [];
 
     let deps = [];
-    let i = 0;
-    while (i < lines.length) {
-      const fileName = lines[i]?.trim();
-      if (fileName && fileName.match(/\.jsx$/)) {
-        const overview = lines[i + 1]?.trim() || 'No overview available.';
-        deps.push({ file_name: fileName, overview });
-        i += 2;
-      } else {
-        i++;
+    // Handle numbered or bullet lists: e.g., '1. filename: description' or '- filename: description'
+    for (const line of lines) {
+      // Match numbered or bullet list
+      const match = line.match(/^(?:\d+\.|-)\s*(.+?):\s*(.+)$/);
+      if (match) {
+        const file_name = match[1].trim();
+        const overview = match[2].trim();
+        deps.push({ file_name, overview });
+      } else if (line.includes(':')) {
+        // Fallback: 'filename: description'
+        const [file_name, ...descParts] = line.split(':');
+        deps.push({ file_name: file_name.trim(), overview: descParts.join(':').trim() });
+      } else if (line.trim()) {
+        // Fallback: just filename
+        deps.push({ file_name: line.trim(), overview: '' });
       }
     }
     return deps;
@@ -142,8 +161,13 @@ export default function RequirementDetailView({
   };
 
   const renderDependencies = () => {
-    const dependencies = requirement?.dependencies?.length ? requirement.dependencies : parseDependentFiles(requirement?.requirements || '');
-    console.log('Rendering dependencies:', dependencies);
+    let dependencies = [];
+    // Prefer explicit dependencies array from backend
+    if (requirement?.dependencies && requirement.dependencies.length > 0) {
+      dependencies = requirement.dependencies;
+    } else {
+      dependencies = parseDependentFiles(requirement?.requirements || '');
+    }
 
     if (!dependencies.length) {
       return <p className="text-sm text-gray-600">No dependencies detected.</p>;
@@ -151,21 +175,38 @@ export default function RequirementDetailView({
 
     return (
       <div className="mt-4 space-y-3">
-        {dependencies.map((dep, index) => {
-          const matchedReq = allRequirements.find(req => req.file_name === dep.file_name);
-          const relativePath = matchedReq?.relative_path || '';
-          const overview = dep.dependency_reason || getDependencyOverview(dep.file_name);
-          return (
-            <div
-              key={index}
-              className={`mb-3 p-4 bg-white border border-gray-200 rounded-lg shadow-sm ${relativePath ? 'cursor-pointer hover:bg-teal-50' : ''} transition-colors duration-200`}
-              onClick={() => relativePath && handleDependencyClick(relativePath, dep.file_name)}
-            >
-              <p className="font-semibold text-teal-600">{dep.file_name}</p>
-              <p className="text-sm text-gray-500 mt-1">{overview}</p>
-            </div>
-          );
-        })}
+        {dependencies
+          .map((dep, index) => {
+            const fileName = dep.file_name || dep.filename || '';
+            const matchedReq = allRequirements.find(req => req.file_name === fileName);
+            const relPath = matchedReq?.relative_path || dep.relative_path || '';
+            // Use getDependencyOverview to get a short overview for the file
+            let overview = getDependencyOverview(fileName);
+            // Fallback to dep.overview if getDependencyOverview returns empty
+            if (!overview && dep.overview) overview = dep.overview;
+            // Remove cards with technical import reason or 'No overview available.'
+            if (
+              !overview ||
+              /^imports\b/i.test(overview) ||
+              overview.toLowerCase().includes('providing components or utilities') ||
+              overview.toLowerCase().includes('no overview available')
+            ) {
+              return null;
+            }
+            return (
+              <div
+                key={index}
+                className={`mb-3 p-4 bg-white border border-gray-200 rounded-lg shadow-sm ${relPath ? 'cursor-pointer hover:bg-teal-50' : ''} transition-colors duration-200`}
+                onClick={() => relPath && handleDependencyClick(relPath, fileName)}
+              >
+                <p className="font-semibold text-teal-600">{fileName}</p>
+                {overview && (
+                  <p className="text-sm text-gray-500 mt-1">{overview.replace(/^#+\s*/, '')}</p>
+                )}
+              </div>
+            );
+          })
+          .filter(Boolean)}
       </div>
     );
   };
@@ -206,8 +247,8 @@ export default function RequirementDetailView({
         <h3 className="text-xl font-semibold text-teal-700 mb-2">Full Requirements</h3>
         <div className="prose max-w-full text-gray-800">
           <div dangerouslySetInnerHTML={{ __html: otherContent }} />
-          <div>
-            <strong className="text-teal-700 text-xl block mt-6 mb-4">Dependent Files</strong>
+          <div className="mt-8">
+            <h3 className="text-xl font-semibold text-teal-700 mb-4">Dependent Files</h3>
             {renderDependencies()}
           </div>
         </div>
