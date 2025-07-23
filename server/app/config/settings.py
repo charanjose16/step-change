@@ -44,6 +44,6 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
-        extra = "forbid"  # Disallow undefined fields for security
+        extra = "ignore"  # Ignore undefined fields like PORT
 
 settings = Settings()

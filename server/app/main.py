@@ -1,3 +1,5 @@
+import os
+from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -32,7 +34,8 @@ app = FastAPI(
 origins = [
     "http://localhost:5173",
     "http://localhost:5174",
-    "http://localhost:5177"
+    "http://localhost:5177",
+    "http://localhost:5178"
 ]
 
 app.add_middleware(
@@ -72,4 +75,6 @@ async def log_requests(request: Request, call_next):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8001, reload=True)
+    load_dotenv()
+    port = int(os.getenv("PORT", 8002))
+    uvicorn.run("app.main:app", host="0.0.0.0", port=port, reload=True)
