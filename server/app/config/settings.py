@@ -2,20 +2,21 @@
 from pydantic_settings import BaseSettings
 from pydantic import Field
 from pathlib import Path
+from typing import Optional
 
 class Settings(BaseSettings):
     # LLM configuration
-    azure_openai_api_key: str = Field(..., env="AZURE_OPENAI_API_KEY")
-    azure_openai_api_version: str = Field(..., env="AZURE_OPENAI_API_VERSION")
-    azure_openai_endpoint: str = Field(..., env="AZURE_OPENAI_ENDPOINT")
-    azure_openai_deployment_name: str = Field(..., env="AZURE_OPENAI_DEPLOYMENT_NAME")
-    azure_openai_model: str = Field(..., env="AZURE_OPENAI_MODEL")
+    azure_openai_api_key: Optional[str] = Field(None, env="AZURE_OPENAI_API_KEY")
+    azure_openai_api_version: Optional[str] = Field(None, env="AZURE_OPENAI_API_VERSION")
+    azure_openai_endpoint: Optional[str] = Field(None, env="AZURE_OPENAI_ENDPOINT")
+    azure_openai_deployment_name: Optional[str] = Field(None, env="AZURE_OPENAI_DEPLOYMENT_NAME")
+    azure_openai_model: Optional[str] = Field(None, env="AZURE_OPENAI_MODEL")
 
-    azure_openai_embed_api_endpoint: str = Field(..., env="AZURE_OPENAI_EMBED_API_ENDPOINT")
-    azure_openai_embed_api_key: str = Field(..., env="AZURE_OPENAI_EMBED_API_KEY")
-    azure_openai_embed_model: str = Field(..., env="AZURE_OPENAI_EMBED_MODEL")
-    azure_openai_embed_version: str = Field(..., env="AZURE_OPENAI_EMBED_VERSION")
-    azure_openai_embed_deployment_name: str = Field(..., env="AZURE_OPENAI_EMBED_DEPLOYMENT_NAME")
+    azure_openai_embed_api_endpoint: Optional[str] = Field(None, env="AZURE_OPENAI_EMBED_API_ENDPOINT")
+    azure_openai_embed_api_key: Optional[str] = Field(None, env="AZURE_OPENAI_EMBED_API_KEY")
+    azure_openai_embed_model: Optional[str] = Field(None, env="AZURE_OPENAI_EMBED_MODEL")
+    azure_openai_embed_version: Optional[str] = Field(None, env="AZURE_OPENAI_EMBED_VERSION")
+    azure_openai_embed_deployment_name: Optional[str] = Field(None, env="AZURE_OPENAI_EMBED_DEPLOYMENT_NAME")
 
     # Logging configuration    
     env: str = Field("dev", env="ENV")  
@@ -36,8 +37,8 @@ class Settings(BaseSettings):
     AUTH_PASSWORD: str = Field(..., env="AUTH_PASSWORD")
 
     # AWS configuration
-    aws_access_key_id: str = Field(..., env="AWS_ACCESS_KEY_ID")
-    aws_secret_access_key: str = Field(..., env="AWS_SECRET_ACCESS_KEY")
+    aws_access_key_id: Optional[str] = Field(None, env="AWS_ACCESS_KEY_ID")
+    aws_secret_access_key: Optional[str] = Field(None, env="AWS_SECRET_ACCESS_KEY")
     aws_region: str = Field("ap-south-2", env="AWS_REGION")
     bucket_name: str = Field("step-change", env="BUCKET_NAME")
 

@@ -273,11 +273,17 @@ class VectorStoreService:
     def __init__(self):
         self.index = None
         self.documents = []
-        self.dimension = int(os.getenv('VECTOR_DIM', '1024'))  # Default for Titan v2
+        # Dynamically determine embedding dimension from model
+        try:
+            import asyncio
+            self.dimension = asyncio.run(llm_config.get_embedding_dimension())
+        except Exception as e:
+            self.dimension = 1024  # fallback
+            logger.warning(f"Could not determine embedding dimension from model, using fallback: {e}")
         logger.info(f"[VECTOR STORE] Using embedding dimension: {self.dimension}")
-        self.metadata_index = {}  # For quick metadata lookups
-        self._embedding_dimension_determined = False
-        self.max_embedding_tokens = 8192  # Your model's limit
+        self.metadata_index = {}
+        self._embedding_dimension_determined = True
+        self.max_embedding_tokens = 8192
         self.tokenizer = None
         
     def _get_tokenizer(self):

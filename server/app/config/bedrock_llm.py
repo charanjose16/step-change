@@ -9,7 +9,30 @@ logger = logging.getLogger("bedrock_llm_config")
 # Bedrock client and model config
 _bedrock_client = boto3.client("bedrock-runtime", region_name="eu-west-2")
 _SONNET_MODEL_ID = "anthropic.claude-3-7-sonnet-20250219-v1:0"
-_TITAN_EMBED_MODEL_ID = "amazon.titan-embed-text-v2:0"  # TODO: Set this to a valid embedding model ID for your region
+_TITAN_EMBED_MODEL_ID = "amazon.titan-embed-text-v2:0"  # Set this to the correct embedding model for your region
+
+# Helper to get embedding dimension
+async def get_embedding_dimension():
+    # Use a short string to get the embedding and return its length
+    body = {"inputText": "test"}
+    response = _bedrock_client.invoke_model(
+        modelId=_TITAN_EMBED_MODEL_ID,
+        contentType="application/json",
+        accept="application/json",
+        body=json.dumps(body)
+    )
+    output = response["body"].read()
+    data = json.loads(output)
+    embedding = data.get("embedding", [])
+    return len(embedding)
+
+def _truncate_text(text, max_tokens=8192):
+    # Truncate text to max_tokens using a simple word split (for safety)
+    # In production, use a tokenizer for exact token count
+    words = text.split()
+    if len(words) > max_tokens:
+        return ' '.join(words[:max_tokens])
+    return text
 
 async def call_sonnet(prompt_or_messages, max_tokens=1000, temperature=0.2, stop=None):
     """
@@ -57,11 +80,13 @@ async def call_sonnet(prompt_or_messages, max_tokens=1000, temperature=0.2, stop
 async def bedrock_embed(text):
     """
     Calls AWS Bedrock Titan Embeddings model and returns the embedding vector.
+    Truncates input to 8192 tokens for safety.
     """
     loop = asyncio.get_event_loop()
     def _invoke():
         try:
-            body = {"inputText": text}
+            safe_text = _truncate_text(text, 8192)
+            body = {"inputText": safe_text}
             response = _bedrock_client.invoke_model(
                 modelId=_TITAN_EMBED_MODEL_ID,
                 contentType="application/json",
@@ -70,21 +95,23 @@ async def bedrock_embed(text):
             )
             output = response["body"].read()
             data = json.loads(output)
-            embedding = data.get("embedding", [0.0] * 1536)
+            embedding = data.get("embedding", [0.0] * 1024)
             if not embedding or all(v == 0.0 for v in embedding):
                 logger.error(f"[Bedrock Embed] All-zero or missing embedding for input: {text[:100]}")
             return embedding
         except Exception as e:
             logger.error(f"[Bedrock Embed] Exception: {e}")
-            return [0.0] * 1536
+            return [0.0] * 1024
     return await loop.run_in_executor(None, _invoke)
 
 def bedrock_embed_sync(text):
     """
     Synchronous version of the Bedrock embedding call.
+    Truncates input to 8192 tokens for safety.
     """
     try:
-        body = {"inputText": text}
+        safe_text = _truncate_text(text, 8192)
+        body = {"inputText": safe_text}
         response = _bedrock_client.invoke_model(
             modelId=_TITAN_EMBED_MODEL_ID,
             contentType="application/json",
@@ -93,13 +120,13 @@ def bedrock_embed_sync(text):
         )
         output = response["body"].read()
         data = json.loads(output)
-        embedding = data.get("embedding", [0.0] * 1536)
+        embedding = data.get("embedding", [0.0] * 1024)
         if not embedding or all(v == 0.0 for v in embedding):
             logger.error(f"[Bedrock Embed] All-zero or missing embedding for input: {text[:100]}")
         return embedding
     except Exception as e:
         logger.error(f"[Bedrock Embed] Exception: {e}")
-        return [0.0] * 1536
+        return [0.0] * 1024
 
 class BedrockLLMConfig:
     """
@@ -136,6 +163,10 @@ class BedrockLLMConfig:
     @property
     def embed_model(self):
         return self._embed_model
+
+    @staticmethod
+    async def get_embedding_dimension():
+        return await get_embedding_dimension()
 
     @staticmethod
     def count_tokens(text: str) -> int:
