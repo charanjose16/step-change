@@ -120,6 +120,7 @@ class FileRequirements(BaseModel):
     file_name: str
     requirements: str
     dependencies: List[FileDependency]
+    dependents: List[dict] = []
 
 class FilesRequirements(BaseModel):
     files: List[FileRequirements]
@@ -1545,7 +1546,15 @@ async def generate_requirements_for_file_whole(file_path: str, base_dir: str, la
 
         # Ensure all dependencies are FileDependency model instances before passing to FileRequirements
         from app.services.dependency_service import FileDependency
-        dependencies = [FileDependency(**dep) if not isinstance(dep, FileDependency) else dep for dep in dependencies]
+        new_deps = []
+        for dep in dependencies:
+            if isinstance(dep, FileDependency):
+                new_deps.append(dep)
+            elif isinstance(dep, dict):
+                new_deps.append(FileDependency(**dep))
+            else:
+                continue
+        dependencies = new_deps
 
         # Return only the raw LLM output as requirements (no structured JSON)
         return FileRequirements(
@@ -1853,84 +1862,78 @@ def _create_chunk_fallback(chunk_num: int, file_path: str) -> str:
 async def generate_requirements_for_files_whole(directory: str) -> FilesRequirements:
     """Optimized batch processing of files with detailed summary logging for embedding/chunking."""
     logger.info(f"Starting requirements generation for {directory}")
-    
     try:
         # Get all files to process
         code_files = get_code_files(directory)
         all_files = []
-        
         for root, _, files in os.walk(directory):
             for file in files:
                 file_path = os.path.join(root, file)
                 _, ext = os.path.splitext(file)
-                
                 if ext.lower() in {'.xlsx', '.xlsm', '.xls', '.xlsb'}:
                     language = "Excel" if ext.lower() == '.xlsx' else "VBA"
                     all_files.append((file_path, language))
                 elif (file_path, get_file_language(file_path)) in code_files:
                     all_files.append((file_path, get_file_language(file_path)))
-
         total_files = len(all_files)
         logger.info(f"Found {total_files} files for requirements generation in {directory}")
-
         files_requirements = []
         completed_count = 0
         chunking_stats = {"total_files": total_files, "total_chunks": 0, "files": []}
-
-        # Process files in smaller batches with controlled concurrency
-        batch_size = min(BATCH_SIZE, 6)  # Limit batch size for better control
+        batch_size = min(BATCH_SIZE, 6)
         file_batches = [all_files[i:i + batch_size] for i in range(0, total_files, batch_size)]
-        
         for batch_num, batch in enumerate(file_batches):
             logger.info(f"Processing batch {batch_num + 1}/{len(file_batches)}")
-            
             tasks = [
                 generate_requirements_for_file_whole(file_path, directory, language)
                 for file_path, language in batch
             ]
-            
-            # Use asyncio.gather with return_exceptions to handle failures gracefully
             batch_results = await asyncio.gather(*tasks, return_exceptions=True)
-            
             for i, result in enumerate(batch_results):
                 file_path, language = batch[i]
                 if isinstance(result, Exception):
                     logger.error(f"Error processing {file_path}: {result}")
-                    # Create fallback requirement
                     fallback = _create_fallback_requirements(file_path, directory, language, "processing error")
                     files_requirements.append(fallback)
                     chunking_stats["files"].append({"file": file_path, "chunks": 0, "status": "error", "reason": str(result)})
                 else:
                     files_requirements.append(result)
-                    # Try to inspect chunking/embedding for this file
                     try:
-                        # If requirements object has chunk info, log it
                         if hasattr(result, "requirements") and hasattr(result, "file_name"):
                             logger.info(f"[SUMMARY] File {result.file_name} processed.")
                         chunking_stats["files"].append({"file": file_path, "chunks": "?", "status": "ok"})
                     except Exception as stat_exc:
                         logger.warning(f"[SUMMARY] Could not inspect chunking for {file_path}: {stat_exc}")
-            
             completed_count += len(batch)
             progress = completed_count / total_files * 100
             logger.info(f"Progress: {completed_count}/{total_files} files processed ({progress:.1f}%)")
-            
-            # Brief pause between batches to prevent overwhelming the system
             if batch_num < len(file_batches) - 1:
                 await asyncio.sleep(0.1)
-
+        # --- NEW: Build reverse dependency (dependents) map ---
+        # Map: file_name -> list of FileRequirements that import it
+        file_name_to_req = {req.file_name: req for req in files_requirements}
+        dependents_map = {req.file_name: [] for req in files_requirements}
+        for req in files_requirements:
+            for dep in getattr(req, 'dependencies', []):
+                dep_name = getattr(dep, 'file_name', None)
+                if dep_name and dep_name in dependents_map:
+                    # Add this file as a dependent of dep_name
+                    overview = req.requirements.split('\n\n')[0] if req.requirements else ''
+                    short_overview = overview.split('\n', 1)[-1][:200] if overview else ''
+                    dependents_map[dep_name].append({
+                        'file_name': req.file_name,
+                        'relative_path': req.relative_path,
+                        'dependency_reason': short_overview or 'Imports this file.'
+                    })
+        # Attach dependents to each FileRequirements
+        for req in files_requirements:
+            req.dependents = dependents_map.get(req.file_name, [])
         # Sort results by relative path
         files_requirements.sort(key=lambda x: x.relative_path)
-        
-        # Create final object
         files_requirements_obj = FilesRequirements(files=files_requirements)
-        
-        # Generate project summary and graphs
         project_summary, graphs = await generate_project_summary(files_requirements_obj)
         files_requirements_obj.project_summary = project_summary
         files_requirements_obj.graphs = graphs
-
-        # Save vector store at the end (only for local FAISS backend)
         from app.services.vector_store_service import VectorStoreService
         try:
             if isinstance(vector_store, VectorStoreService):
@@ -1938,12 +1941,9 @@ async def generate_requirements_for_files_whole(directory: str) -> FilesRequirem
                 logger.info("Vector store saved successfully")
         except Exception as e:
             logger.error(f"Failed to save vector store: {e}")
-
-        # Log summary of chunking/embedding for diagnostics
         logger.info(f"[SUMMARY] Embedding/chunking stats: {json.dumps(chunking_stats, indent=2)}")
         logger.info(f"Completed requirements generation for {len(files_requirements)} files with project summary and {len(graphs)} graphs")
         return files_requirements_obj
-        
     except Exception as e:
         logger.error(f"Error processing directory {directory}: {str(e)}")
         return FilesRequirements(files=[])

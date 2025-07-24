@@ -15,11 +15,9 @@ const formatRequirementSummary = (text) => {
     const lines = paragraph.split('\n').filter(l => l.trim());
     if (!lines.length) continue;
 
-    // Skip any markdown/LLM-generated Dependent Files section
+    // Robustly skip any Dependent Files section (with or without Markdown #)
     const depFilesHeader = lines[0].match(/^#*\s*Dependent Files/i);
-    // If this is a markdown/LLM Dependent Files list (with - ./ or - filename), skip this paragraph
-    const isDepFilesList = depFilesHeader && lines.some(line => line.match(/^-\s*\.?\/?[\w\/-]+/));
-    if (isDepFilesList) continue;
+    if (depFilesHeader) continue;
 
     // Check if paragraph is a numbered list (starts with "1.", "2.", etc.)
     const isNumberedList = lines[0].match(/^\d+\.\s+/);
@@ -162,8 +160,10 @@ export default function RequirementDetailView({
 
   const renderDependencies = () => {
     let dependencies = [];
-    // Prefer explicit dependencies array from backend
-    if (requirement?.dependencies && requirement.dependencies.length > 0) {
+    // Prefer explicit dependents array from backend (reverse dependencies)
+    if (requirement?.dependents && requirement.dependents.length > 0) {
+      dependencies = requirement.dependents;
+    } else if (requirement?.dependencies && requirement.dependencies.length > 0) {
       dependencies = requirement.dependencies;
     } else {
       dependencies = parseDependentFiles(requirement?.requirements || '');
@@ -182,8 +182,9 @@ export default function RequirementDetailView({
             const relPath = matchedReq?.relative_path || dep.relative_path || '';
             // Use getDependencyOverview to get a short overview for the file
             let overview = getDependencyOverview(fileName);
-            // Fallback to dep.overview if getDependencyOverview returns empty
+            // Fallback to dep.overview or dep.dependency_reason if getDependencyOverview returns empty
             if (!overview && dep.overview) overview = dep.overview;
+            if (!overview && dep.dependency_reason) overview = dep.dependency_reason;
             // Remove cards with technical import reason or 'No overview available.'
             if (
               !overview ||
