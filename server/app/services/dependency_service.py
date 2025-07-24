@@ -116,9 +116,10 @@ async def detect_dependencies(file_path: str, content: str, language: str, base_
                 import_dir = os.path.dirname(import_name) if language in ['javascript', 'typescript'] else ''
                 import_base = os.path.basename(import_name)
 
-                # Skip standard library or external modules
-                if language in ['python', 'csharp', 'java'] and '.' in import_name:
-                    continue  # e.g., 'System.Text' or 'java.util'
+                # Remove overly strict skip for standard library/external modules
+                # (Let the file existence check below determine if it's a local dependency)
+                # if language in ['python', 'csharp', 'java'] and '.' in import_name:
+                #     continue  # e.g., 'System.Text' or 'java.util'
 
                 # Normalize import path for JavaScript/TypeScript
                 if language in ['javascript', 'typescript']:

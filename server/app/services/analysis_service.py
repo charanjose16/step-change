@@ -22,6 +22,7 @@ from .vector_store_service import get_vector_store_service
 import logging
 from app.utils.angular_parser import summarize_angular_file
 from app.utils.dotnet_parser import summarize_csharp_code
+import inspect
 
 # Constants
 CHUNK_GROUP_SIZE = 40
@@ -836,11 +837,12 @@ async def combine_requirements(requirements_list: List[str], language: str) -> s
 
     for req_text in requirements_list:
         try:
-            sections = re.split(r'\n\n(?=Overview|Objective|Use Case|Key Functionalities|Workflow Summary)', req_text)
+            # Updated regex to split on Markdown or plain section headers
+            sections = re.split(r'\n+\s*#*\s*(?=Overview|Objective|Use Case|Key Functionalities|Workflow Summary)', req_text, flags=re.IGNORECASE)
             section_dict = {}
             for section in sections:
                 for header in ['Overview', 'Objective', 'Use Case', 'Key Functionalities', 'Workflow Summary']:
-                    if section.startswith(header):
+                    if _normalize_header(section).startswith(header.lower()):
                         section_dict[header] = section[len(header):].strip()
                         break
 
@@ -1517,9 +1519,33 @@ async def generate_requirements_for_file_whole(file_path: str, base_dir: str, la
         # Wait for dependencies to complete
         dependencies = await dependencies_task
 
+        # Enrich each dependency with the Overview section from the requirements of the corresponding FileRequirements (if available in the current batch)
+        import inspect
+        frame = inspect.currentframe()
+        all_requirements = None
+        while frame:
+            if 'all_requirements' in frame.f_locals:
+                all_requirements = frame.f_locals['all_requirements']
+                break
+            frame = frame.f_back
+        if all_requirements:
+            for dep in dependencies:
+                match = next((r for r in all_requirements if getattr(r, 'file_name', None) == dep.file_name), None)
+                if match and getattr(match, 'requirements', None):
+                    reqs = match.requirements.split('\n\n')
+                    overview_section = next((s for s in reqs if s.strip().lower().startswith('overview')), None)
+                    if overview_section:
+                        lines = overview_section.split('\n')[1:]
+                        overview = ' '.join(l.strip() for l in lines if l.strip())[:200]
+                        dep.dependency_reason = overview
+
         # Add dependencies to requirements text
         dep_text = _format_dependencies(dependencies)
         requirements_text += f"\n\nDependent Files\n{dep_text}"
+
+        # Ensure all dependencies are FileDependency model instances before passing to FileRequirements
+        from app.services.dependency_service import FileDependency
+        dependencies = [FileDependency(**dep) if not isinstance(dep, FileDependency) else dep for dep in dependencies]
 
         # Return only the raw LLM output as requirements (no structured JSON)
         return FileRequirements(
@@ -1611,8 +1637,9 @@ async def _extract_dependencies_async(file_path: str, content: str, language: st
 
 
 def _normalize_header(header):
-    """Normalize section headers for flexible matching."""
+    """Normalize section headers for flexible matching, including Markdown-style headers."""
     header = header.lower().strip()
+    header = header.lstrip('#').strip()  # Remove leading Markdown hashes
     header = header.replace('functionality', 'functionalities')
     header = header.replace('key functionality', 'key functionalities')
     header = header.replace('dependent file', 'dependent files')
@@ -1633,7 +1660,8 @@ def _parse_sections(text):
     """Parse LLM output into sections, allowing for minor header variations and extra commentary."""
     sections = {}
     current = None
-    lines = text.splitlines()
+    # Updated regex to split on Markdown or plain section headers
+    lines = re.split(r'\n+\s*#*\s*(?=Overview|Objective|Use Case|Key Functionalities|Workflow Summary|Dependent Files)', text, flags=re.IGNORECASE)
     for line in lines:
         norm = _normalize_header(line)
         for req in REQUIRED_SECTIONS:
@@ -1725,6 +1753,7 @@ async def _generate_medium_file_requirements(content: str, file_path: str, langu
     prompt = STRICT_SECTION_PROMPT + "\n" + content
     output = await _call_llm_with_logging(prompt, llm_config._llm, file_path, 1, max_tokens=1000)
     logger.debug(f"[RAW LLM OUTPUT][{file_path}][direct]: {output[:1000]}")
+    logger.info(f"[LLM OUTPUT] Chunk 1 (direct):\n{output}")
     if not is_generic_llm_output(output):
         logger.info(f"[HYBRID RAG] Used direct LLM output for {file_path}")
         return output
@@ -1742,6 +1771,7 @@ async def _generate_medium_file_requirements(content: str, file_path: str, langu
     )
     rag_output = await _call_llm_with_logging(rag_prompt, llm_config._llm, file_path, 2, max_tokens=1000)
     logger.debug(f"[RAW LLM OUTPUT][{file_path}][RAG]: {rag_output[:1000]}")
+    logger.info(f"[LLM OUTPUT] Chunk 2 (RAG):\n{rag_output}")
     logger.info(f"[HYBRID RAG] Used RAG-augmented output for {file_path}")
     return rag_output
 
@@ -1759,7 +1789,8 @@ async def _generate_large_file_requirements(content: str, file_path: str, langua
         # Hybrid logic per chunk
         prompt = STRICT_SECTION_PROMPT + "\n" + chunk_content
         output = await _call_llm_with_logging(prompt, llm_config._llm, f"{file_path}::chunk{i+1}", 1, max_tokens=1000)
-        logger.debug(f"[RAW LLM OUTPUT][{file_path}][chunk {i+1}][direct]: {output[:1000]}")
+        logger.debug(f"[DEBUG] LLM output for chunk {i+1} (direct):\n{output}")
+        logger.info(f"[LLM OUTPUT] Chunk {i+1} (direct):\n{output}")
         if not is_generic_llm_output(output):
             logger.info(f"[HYBRID RAG][chunk {i+1}] Used direct LLM output for {file_path}")
             requirements_list.append(output)
@@ -1777,10 +1808,12 @@ async def _generate_large_file_requirements(content: str, file_path: str, langua
             chunk_content
         )
         rag_output = await _call_llm_with_logging(rag_prompt, llm_config._llm, f"{file_path}::chunk{i+1}", 2, max_tokens=1000)
-        logger.debug(f"[RAW LLM OUTPUT][{file_path}][chunk {i+1}][RAG]: {rag_output[:1000]}")
+        logger.debug(f"[DEBUG] LLM output for chunk {i+1} (RAG):\n{rag_output}")
+        logger.info(f"[LLM OUTPUT] Chunk {i+1} (RAG):\n{rag_output}")
         logger.info(f"[HYBRID RAG][chunk {i+1}] Used RAG-augmented output for {file_path}")
         requirements_list.append(rag_output)
-    return '\n\n'.join(requirements_list)
+    # Instead of concatenating, combine and deduplicate sections
+    return await combine_requirements(requirements_list, language)
 
 def _create_fallback_requirements_text(file_path: str, language: str, error_type: str, rules_summary: str) -> str:
     """Create fallback requirements text"""
@@ -2214,6 +2247,7 @@ async def _generate_small_file_requirements(content: str, file_path: str, langua
     prompt = STRICT_SECTION_PROMPT + "\n" + content
     output = await _call_llm_with_logging(prompt, llm_config._llm, file_path, 1, max_tokens=1000)
     logger.debug(f"[RAW LLM OUTPUT][{file_path}][direct]: {output[:1000]}")
+    logger.info(f"[LLM OUTPUT] Chunk 1 (direct):\n{output}")
     if not is_generic_llm_output(output):
         logger.info(f"[HYBRID RAG] Used direct LLM output for {file_path}")
         return output
@@ -2231,5 +2265,6 @@ async def _generate_small_file_requirements(content: str, file_path: str, langua
     )
     rag_output = await _call_llm_with_logging(rag_prompt, llm_config._llm, file_path, 2, max_tokens=1000)
     logger.debug(f"[RAW LLM OUTPUT][{file_path}][RAG]: {rag_output[:1000]}")
+    logger.info(f"[LLM OUTPUT] Chunk 2 (RAG):\n{rag_output}")
     logger.info(f"[HYBRID RAG] Used RAG-augmented output for {file_path}")
     return rag_output
