@@ -5,6 +5,7 @@ import { useState } from "react";
 // Lightweight D3 force-graph for project dependencies
 // Props: { graphData: { nodes, edges }, loading, error }
 export default function D3ProjectGraph({ graphData, loading, error }) {
+    console.log('D3ProjectGraph graphData:', graphData); // Debug: print graphData
     const svgRef = useRef();
 
     useEffect(() => {

@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "../api/axiosConfig";
 import Navbar from "../components/Navbar";
-
+import mermaid from "mermaid";
+import { Canvg } from "canvg";
 import {
   FolderOpen,
   XCircle,
@@ -19,8 +20,6 @@ import {
   Star,
   Activity,
   Loader2,
-  CloudDownload,
-  Brain,
 } from "lucide-react";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -37,6 +36,10 @@ export default function Dashboard() {
   const [favorites, setFavorites] = useState([]);
   const [quickStats, setQuickStats] = useState(null);
   const [loadingProgress, setLoadingProgress] = useState(0);
+  const [projectSummary, setProjectSummary] = useState(null);
+  const [summaryGraphResponses, setSummaryGraphResponses] = useState([]);
+  const [loadingSummaryGraphs, setLoadingSummaryGraphs] = useState(false);
+  const [summaryGraphError, setSummaryGraphError] = useState("");
 
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
@@ -63,6 +66,42 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, [loading]);
 
+  // Fetch project summary and graphs after analysis is complete
+  useEffect(() => {
+    const fetchProjectSummaryAndGraphs = async () => {
+      if (!analysisComplete || !result || projectSummary) return;
+
+      setLoadingSummaryGraphs(true);
+      try {
+        const storedResult = JSON.parse(localStorage.getItem("requirementsOutput"));
+        if (storedResult?.summary) {
+          setProjectSummary(storedResult.summary);
+
+          // Fetch summary graphs
+          const payload = { requirement: storedResult.summary };
+          const response = await axios.post("/analysis/graphs", payload);
+          const data = Array.isArray(response.data) ? response.data : [];
+          const validGraphs = data.filter((g) => g && g.generated_code) || [];
+          setSummaryGraphResponses(validGraphs);
+
+          if (validGraphs.length === 0) {
+            setSummaryGraphError("No valid graphs were generated for the project summary.");
+          }
+        } else {
+          setProjectSummary("No project summary available.");
+        }
+      } catch (error) {
+        console.error("Error fetching project summary or graphs:", error);
+        setSummaryGraphError(`Failed to fetch summary graphs: ${error.message}`);
+        setProjectSummary("Unable to generate project summary due to an error.");
+      } finally {
+        setLoadingSummaryGraphs(false);
+      }
+    };
+
+    fetchProjectSummaryAndGraphs();
+  }, [analysisComplete, result, projectSummary]);
+
   // Helper functions
   const loadStoredData = () => {
     const storedResult = localStorage.getItem("requirementsOutput");
@@ -75,6 +114,9 @@ export default function Dashboard() {
         setResult(parsedResult);
         setAnalysisComplete(true);
         generateQuickStats(parsedResult);
+        if (parsedResult.summary) {
+          setProjectSummary(parsedResult.summary);
+        }
       } catch {
         localStorage.removeItem("requirementsOutput");
       }
@@ -154,6 +196,38 @@ export default function Dashboard() {
     localStorage.setItem("favorites", JSON.stringify(updatedFavorites));
   };
 
+  // Parse project summary
+  const parseProjectSummary = (summary) => {
+    if (!summary || typeof summary !== "string") return null;
+
+    const sections = [];
+    const lines = summary.split("\n").filter((line) => line.trim());
+    let currentSection = null;
+
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+      if (trimmedLine.startsWith("## ")) {
+        if (currentSection) {
+          sections.push(currentSection);
+        }
+        const title = trimmedLine.replace("## ", "");
+        currentSection = {
+          title,
+          content: "",
+          key: title.toLowerCase().replace(/[^a-z0-9]/g, "_"),
+        };
+      } else if (currentSection && trimmedLine) {
+        currentSection.content += (currentSection.content ? " " : "") + trimmedLine;
+      }
+    }
+
+    if (currentSection) {
+      sections.push(currentSection);
+    }
+
+    return sections.length > 0 ? sections : null;
+  };
+
   // Main handlers
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -163,6 +237,9 @@ export default function Dashboard() {
     setAnalysisComplete(false);
     setQuickStats(null);
     setLoadingProgress(0);
+    setProjectSummary(null);
+    setSummaryGraphResponses([]);
+    setSummaryGraphError("");
     localStorage.removeItem("requirementsOutput");
 
     if (!isValidFolderName(folderName)) {
@@ -207,6 +284,9 @@ export default function Dashboard() {
     setAnalysisComplete(false);
     setQuickStats(null);
     setLoadingProgress(0);
+    setProjectSummary(null);
+    setSummaryGraphResponses([]);
+    setSummaryGraphError("");
     localStorage.removeItem("requirementsOutput");
   };
 
@@ -216,8 +296,11 @@ export default function Dashboard() {
   };
 
   // Download PDF function
-  const downloadPDF = () => {
-    if (!result || !result.requirements || !result.requirements.length) return;
+  const downloadPDF = async (projectSummary, summaryGraphResponses, result, folderName, quickStats) => {
+    if (!result || !result.requirements || !result.requirements.length) {
+      console.error("No valid result data to generate PDF.");
+      return;
+    }
 
     const doc = new jsPDF({
       orientation: "portrait",
@@ -241,6 +324,116 @@ export default function Dashboard() {
     const tealColor = [0, 128, 128];
     const grayColor = [75, 85, 99];
 
+    // Render Mermaid Diagram
+    const renderMermaidDiagram = async (mermaidCode, targetGraph) => {
+      try {
+        const cleanChart = mermaidCode?.trim();
+        if (!cleanChart) {
+          return { imageData: null, code: cleanChart, error: "Empty diagram definition" };
+        }
+
+        const validGraphTypes = {
+          graph: [/^graph\s+(TD|LR)/i, /^flowchart\s+(TD|LR)/i],
+          sequenceDiagram: /^sequenceDiagram/i,
+          classDiagram: /^classDiagram/i,
+          stateDiagram: /^stateDiagram/i,
+          erDiagram: /^erDiagram/i,
+          requirementDiagram: /^requirementDiagram/i,
+        };
+
+        const isValidMermaid = Object.values(validGraphTypes).some((regexes) =>
+          Array.isArray(regexes) ? regexes.some((regex) => regex.test(cleanChart)) : regexes.test(cleanChart)
+        );
+
+        if (!isValidMermaid) {
+          return { imageData: null, code: cleanChart, error: "Invalid Mermaid syntax" };
+        }
+
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: "default",
+          securityLevel: "loose",
+          logLevel: 1,
+          htmlLabels: false,
+          fontFamily: "Arial, sans-serif",
+          maxTextSize: 1000000,
+          er: { useMaxWidth: true },
+          requirement: { useMaxWidth: true },
+        });
+
+        const diagramId = `diagram-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        let svg;
+        try {
+          const renderResult = await mermaid.render(diagramId, cleanChart);
+          svg = renderResult.svg;
+          svg = svg.replace(
+            "</svg>",
+            `<style>
+              text, .nodeLabel, .edgeLabel, .label {
+                font-family: Arial, sans-serif;
+                font-size: 14px;
+                fill: #222;
+                stroke: none;
+              }
+              .edgeLabel { background: white; }
+            </style></svg>`
+          );
+        } catch (renderError) {
+          return {
+            imageData: null,
+            code: cleanChart,
+            error: `Mermaid render failed: ${renderError.message}`,
+          };
+        }
+
+        const canvas = document.createElement("canvas");
+        canvas.width = 2000;
+        canvas.height = 1500;
+        const ctx = canvas.getContext("2d");
+        try {
+          const v = await Canvg.fromString(ctx, svg, {
+            ignoreDimensions: false,
+            scale: 1,
+          });
+          await v.render();
+        } catch (canvgError) {
+          return {
+            imageData: null,
+            code: cleanChart,
+            error: `Canvg render failed: ${canvgError.message}`,
+          };
+        }
+
+        const imageData = canvas.toDataURL("image/png", 0.95);
+        if (!imageData || imageData === "data:,") {
+          return { imageData: null, code: cleanChart, error: "Invalid PNG generated" };
+        }
+
+        return { imageData, code: cleanChart, error: null };
+      } catch (error) {
+        return {
+          imageData: null,
+          code: mermaidCode?.trim() || "",
+          error: `Render error: ${error.message}`,
+        };
+      }
+    };
+
+    // Fetch graphs for requirement
+    const fetchGraphsForRequirement = async (requirement) => {
+      try {
+        if (!requirement?.requirements?.trim()) return [];
+        const payload = { requirement: requirement.requirements };
+        const response = await axios.post("/analysis/graphs", payload);
+        const data = Array.isArray(response.data) ? response.data : [];
+        return data.filter((g) => g && g.generated_code);
+      } catch (error) {
+        console.error("Error fetching graphs for requirement:", error);
+        return [];
+      }
+    };
+
+    // Header and metadata
     doc.setFont("helvetica", "bold");
     doc.setFontSize(20);
     doc.setTextColor(...tealColor);
@@ -273,6 +466,162 @@ export default function Dashboard() {
     });
 
     yPosition += 10;
+
+    // Section: Project Summary
+    if (projectSummary && typeof projectSummary === "string") {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(14);
+      doc.setTextColor(...tealColor);
+      doc.text("Project Summary", marginLeft, yPosition);
+      yPosition += 8;
+
+      const sections = parseProjectSummary(projectSummary);
+      if (sections) {
+        sections.forEach((section) => {
+          if (yPosition > 250) {
+            doc.addPage();
+            yPosition = marginTop;
+            doc.setLineWidth(0.3);
+            doc.setDrawColor(...grayColor);
+            doc.rect(10, 10, pageWidth - 20, pageHeight - 20, "S");
+          }
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(12);
+          doc.setTextColor(...tealColor);
+          doc.text(section.title, marginLeft + 5, yPosition);
+          yPosition += 8;
+
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(10);
+          doc.setTextColor(...grayColor);
+          const contentLines = doc.splitTextToSize(section.content, maxWidth - 10);
+          contentLines.forEach((line) => {
+            if (yPosition > 250) {
+              doc.addPage();
+              yPosition = marginTop;
+              doc.setLineWidth(0.3);
+              doc.setDrawColor(...grayColor);
+              doc.rect(10, 10, pageWidth - 20, pageHeight - 20, "S");
+            }
+            doc.text(line, marginLeft + 5, yPosition);
+            yPosition += 6;
+          });
+          yPosition += 10;
+        });
+      } else {
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(10);
+        doc.setTextColor(...grayColor);
+        const summaryLines = doc.splitTextToSize(projectSummary, maxWidth - 10);
+        summaryLines.forEach((line) => {
+          if (yPosition > 250) {
+            doc.addPage();
+            yPosition = marginTop;
+            doc.setLineWidth(0.3);
+            doc.setDrawColor(...grayColor);
+            doc.rect(10, 10, pageWidth - 20, pageHeight - 20, "S");
+          }
+          doc.text(line, marginLeft + 5, yPosition);
+          yPosition += 6;
+        });
+        yPosition += 10;
+      }
+    } else {
+      doc.setFont("helvetica", "italic");
+      doc.setFontSize(10);
+      doc.setTextColor(150, 150, 150);
+      doc.text("No project summary available.", marginLeft + 5, yPosition);
+      yPosition += 10;
+    }
+
+    // Section: Project Summary Diagrams
+    if (summaryGraphResponses && summaryGraphResponses.length > 0) {
+      if (yPosition > 230) {
+        doc.addPage();
+        yPosition = marginTop;
+        doc.setLineWidth(0.3);
+        doc.setDrawColor(...grayColor);
+        doc.rect(10, 10, pageWidth - 20, pageHeight - 20, "S");
+      }
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(14);
+      doc.setTextColor(...tealColor);
+      doc.text("Project Summary Diagrams", marginLeft, yPosition);
+      yPosition += 8;
+
+      for (let graphIndex = 0; graphIndex < summaryGraphResponses.length; graphIndex++) {
+        const graph = summaryGraphResponses[graphIndex];
+        if (yPosition > 180) {
+          doc.addPage();
+          yPosition = marginTop;
+          doc.setLineWidth(0.3);
+          doc.setDrawColor(...grayColor);
+          doc.rect(10, 10, pageWidth - 20, pageHeight - 20, "S");
+        }
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(10);
+        doc.setTextColor(...grayColor);
+        const diagramTitle = graph.target_graph || `Summary Diagram ${graphIndex + 1}`;
+        doc.text(diagramTitle, marginLeft + 5, yPosition);
+        yPosition += 8;
+
+        try {
+          const { imageData, code, error } = await renderMermaidDiagram(
+            graph.generated_code,
+            diagramTitle
+          );
+          if (imageData) {
+            const maxImageWidth = maxWidth - 20;
+            const maxImageHeight = 100;
+            doc.addImage(
+              imageData,
+              "PNG",
+              marginLeft + 10,
+              yPosition,
+              maxImageWidth,
+              maxImageHeight
+            );
+            yPosition += maxImageHeight + 10;
+          } else {
+            doc.setFont("helvetica", "italic");
+            doc.setFontSize(9);
+            doc.setTextColor(150, 150, 150);
+            doc.text(
+              `Diagram could not be rendered: ${error || "Unknown error"}`,
+              marginLeft + 10,
+              yPosition
+            );
+            yPosition += 8;
+            if (code) {
+              doc.setFont("helvetica", "normal");
+              doc.setFontSize(8);
+              const codeLines = doc.splitTextToSize(`Mermaid Code: ${code}`, maxWidth - 20);
+              codeLines.forEach((line) => {
+                if (yPosition > 250) {
+                  doc.addPage();
+                  yPosition = marginTop;
+                  doc.setLineWidth(0.3);
+                  doc.setDrawColor(...grayColor);
+                  doc.rect(10, 10, pageWidth - 20, pageHeight - 20, "S");
+                }
+                doc.text(line, marginLeft + 10, yPosition);
+                yPosition += 6;
+              });
+            }
+          }
+        } catch (error) {
+          doc.setFont("helvetica", "italic");
+          doc.setFontSize(9);
+          doc.setTextColor(150, 150, 150);
+          doc.text(`Error rendering ${diagramTitle}: ${error.message}`, marginLeft + 10, yPosition);
+          yPosition += 8;
+        }
+        yPosition += 5;
+      }
+      yPosition += 10;
+    }
+
+    // Section: Summary Table
     doc.setFont("helvetica", "bold");
     doc.setFontSize(14);
     doc.setTextColor(...tealColor);
@@ -280,9 +629,9 @@ export default function Dashboard() {
     yPosition += 8;
 
     const summaryData = [
-      ["Total Files", result.requirements.length],
+      ["Total Files", result.requirements.length.toString()],
       ["Languages Detected", quickStats ? quickStats.languages?.join(", ") || "N/A" : "N/A"],
-      ["Last Analyzed", quickStats ? quickStats.lastAnalyzed : "N/A"],
+      ["Last Analyzed", quickStats ? quickStats.lastAnalyzed || "N/A" : "N/A"],
     ];
 
     autoTable(doc, {
@@ -310,108 +659,93 @@ export default function Dashboard() {
 
     yPosition = doc.lastAutoTable.finalY + 15;
 
+    // Section: File Analysis
     doc.setFont("helvetica", "bold");
     doc.setFontSize(14);
     doc.setTextColor(...tealColor);
     doc.text("File Analysis", marginLeft, yPosition);
     yPosition += 8;
 
-    result.requirements.forEach((file, index) => {
-      if (index > 0 || yPosition > 250) {
-        doc.addPage();
-        yPosition = marginTop;
-        doc.setLineWidth(0.3);
-        doc.setDrawColor(...grayColor);
-        doc.rect(10, 10, pageWidth - 20, pageHeight - 20, "S");
-      }
+    try {
+      for (let index = 0; index < result.requirements.length; index++) {
+        const file = result.requirements[index];
 
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(12);
-      doc.setTextColor(...tealColor);
-      doc.text(`${index + 1}. ${file.file_name}`, marginLeft, yPosition);
-      yPosition += 8;
+        if (index > 0 || yPosition > 250) {
+          doc.addPage();
+          yPosition = marginTop;
+          doc.setLineWidth(0.3);
+          doc.setDrawColor(...grayColor);
+          doc.rect(10, 10, pageWidth - 20, pageHeight - 20, "S");
+        }
 
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(10);
-      doc.setTextColor(...grayColor);
-      doc.text(`Path: ${file.relative_path || "N/A"}`, marginLeft + 5, yPosition);
-      yPosition += 8;
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(12);
+        doc.setTextColor(...tealColor);
+        doc.text(`${index + 1}. ${file.file_name}`, marginLeft, yPosition);
+        yPosition += 8;
 
-      if (file.requirements) {
-        const requirementsText = file.requirements;
-        const lines = requirementsText.split("\n");
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(10);
+        doc.setTextColor(...grayColor);
+        doc.text(`Path: ${file.relative_path || "N/A"}`, marginLeft + 5, yPosition);
+        yPosition += 8;
 
-        lines.forEach((line) => {
-          if (yPosition > 250) {
-            doc.addPage();
-            yPosition = marginTop;
-            doc.setLineWidth(0.3);
-            doc.setDrawColor(...grayColor);
-            doc.rect(10, 10, pageWidth - 20, pageHeight - 20, "S");
-          }
-
-          const trimmedLine = line.trim();
-
-          if (trimmedLine) {
-            const keywords = [
-              "Integrates with frontend framework for setup.",
-              "Overview",
-              "Objective",
-              "Use Case",
-              "Purpose",
-              "Description",
-              "Functionality",
-              "Features",
-              "Requirements",
-              "Key Functionalities",
-              "Workflow Summary",
-              "Dependent Files",
-            ];
-            const isKeywordLine = keywords.some(
-              (keyword) =>
-                trimmedLine.startsWith(keyword) ||
-                trimmedLine.includes(`${keyword}:`) ||
-                trimmedLine.includes(`${keyword} `)
-            );
-
-            if (isKeywordLine) {
-              let keywordPart = "";
-              let contentPart = "";
-
-              for (const keyword of keywords) {
-                if (trimmedLine.startsWith(keyword)) {
-                  keywordPart = keyword;
-                  contentPart = trimmedLine.substring(keyword.length).trim();
-                  break;
+        if (file.requirements) {
+          const requirementsText = file.requirements;
+          const lines = requirementsText.split("\n");
+          lines.forEach((line) => {
+            if (yPosition > 250) {
+              doc.addPage();
+              yPosition = marginTop;
+              doc.setLineWidth(0.3);
+              doc.setDrawColor(...grayColor);
+              doc.rect(10, 10, pageWidth - 20, pageHeight - 20, "S");
+            }
+            const trimmedLine = line.trim();
+            if (trimmedLine) {
+              const keywords = [
+                "Integrates with frontend framework for setup.",
+                "Overview",
+                "Objective",
+                "Use Case",
+                "Purpose",
+                "Description",
+                "Functionality",
+                "Features",
+                "Requirements",
+                "Key Functionalities",
+                "Workflow Summary",
+                "Dependent Files",
+              ];
+              const isKeywordLine = keywords.some(
+                (keyword) =>
+                  trimmedLine.startsWith(keyword) ||
+                  trimmedLine.includes(`${keyword}:`) ||
+                  trimmedLine.includes(`${keyword} `)
+              );
+              if (isKeywordLine) {
+                let keywordPart = "";
+                let contentPart = "";
+                for (const keyword of keywords) {
+                  if (trimmedLine.startsWith(keyword)) {
+                    keywordPart = keyword;
+                    contentPart = trimmedLine.substring(keyword.length).trim();
+                    break;
+                  }
                 }
-              }
-
-              doc.setFont("helvetica", "bold");
-              doc.setFontSize(11);
-              doc.setTextColor(...tealColor);
-              const keywordWidth = doc.getTextWidth(keywordPart);
-              doc.text(keywordPart, marginLeft + 5, yPosition);
-
-              if (contentPart) {
-                doc.setFont("helvetica", "normal");
-                doc.setFontSize(10);
-                doc.setTextColor(...grayColor);
-
-                if (keywordPart === "Dependent Files") {
-                  const fileItems = contentPart.split("\n").map((item) => item.trim());
-                  fileItems.forEach((item, index) => {
-                    if (index > 0) yPosition += 6;
-                    if (yPosition > 250) {
-                      doc.addPage();
-                      yPosition = marginTop;
-                      doc.setLineWidth(0.3);
-                      doc.setDrawColor(...grayColor);
-                      doc.rect(10, 10, pageWidth - 20, pageHeight - 20, "S");
-                    }
-                    doc.text(item, marginLeft + 20, yPosition);
-                  });
-                } else {
-                  const contentLines = doc.splitTextToSize(contentPart, maxWidth - 10 - keywordWidth - 5);
+                doc.setFont("helvetica", "bold");
+                doc.setFontSize(11);
+                doc.setTextColor(...tealColor);
+                const keywordWidth = doc.getTextWidth(keywordPart);
+                doc.text(keywordPart, marginLeft + 5, yPosition);
+                if (contentPart) {
+                  doc.setFont("helvetica", "normal");
+                  doc.setFontSize(10);
+                  doc.setTextColor(...grayColor);
+                  const contentLines = doc.splitTextToSize(
+                    contentPart,
+                    maxWidth - 10 - keywordWidth - 5
+                  );
                   doc.text(contentLines[0], marginLeft + 5 + keywordWidth + 3, yPosition);
                   for (let i = 1; i < contentLines.length; i++) {
                     yPosition += 5;
@@ -425,65 +759,152 @@ export default function Dashboard() {
                     doc.text(contentLines[i], marginLeft + 5, yPosition);
                   }
                 }
+              } else {
+                doc.setFont("helvetica", "normal");
+                doc.setFontSize(10);
+                doc.setTextColor(...grayColor);
+                const textLines = doc.splitTextToSize(trimmedLine, maxWidth - 10);
+                textLines.forEach((textLine, lineIndex) => {
+                  if (yPosition > 250) {
+                    doc.addPage();
+                    yPosition = marginTop;
+                    doc.setLineWidth(0.3);
+                    doc.setDrawColor(...grayColor);
+                    doc.rect(10, 10, pageWidth - 20, pageHeight - 20, "S");
+                  }
+                  doc.text(textLine, marginLeft + 5, yPosition);
+                  if (lineIndex < textLines.length - 1) yPosition += 5;
+                });
               }
+              yPosition += 6;
             } else {
+              yPosition += 3;
+            }
+          });
+        }
+
+        yPosition += 10;
+
+        // Fetch and render diagrams
+        try {
+          const graphs = await fetchGraphsForRequirement(file);
+          if (graphs && graphs.length > 0) {
+            if (yPosition > 230) {
+              doc.addPage();
+              yPosition = marginTop;
+              doc.setLineWidth(0.3);
+              doc.setDrawColor(...grayColor);
+              doc.rect(10, 10, pageWidth - 20, pageHeight - 20, "S");
+            }
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(12);
+            doc.setTextColor(...tealColor);
+            doc.text("Diagrams", marginLeft + 5, yPosition);
+            yPosition += 10;
+            for (let graphIndex = 0; graphIndex < graphs.length; graphIndex++) {
+              const graph = graphs[graphIndex];
+              if (yPosition > 180) {
+                doc.addPage();
+                yPosition = marginTop;
+                doc.setLineWidth(0.3);
+                doc.setDrawColor(...grayColor);
+                doc.rect(10, 10, pageWidth - 20, pageHeight - 20, "S");
+              }
               doc.setFont("helvetica", "normal");
               doc.setFontSize(10);
               doc.setTextColor(...grayColor);
+              const diagramTitle = graph.target_graph || `Diagram ${graphIndex + 1}`;
+              doc.text(diagramTitle, marginLeft + 10, yPosition);
+              yPosition += 8;
 
-              const textLines = doc.splitTextToSize(trimmedLine, maxWidth - 10);
-              textLines.forEach((textLine, lineIndex) => {
-                if (yPosition > 250) {
-                  doc.addPage();
-                  yPosition = marginTop;
-                  doc.setLineWidth(0.3);
-                  doc.setDrawColor(...grayColor);
-                  doc.rect(10, 10, pageWidth - 20, pageHeight - 20, "S");
+              try {
+                const { imageData, code, error } = await renderMermaidDiagram(
+                  graph.generated_code,
+                  diagramTitle
+                );
+                if (imageData) {
+                  const maxImageWidth = maxWidth - 20;
+                  const maxImageHeight = 100;
+                  doc.addImage(
+                    imageData,
+                    "PNG",
+                    marginLeft + 10,
+                    yPosition,
+                    maxImageWidth,
+                    maxImageHeight
+                  );
+                  yPosition += maxImageHeight + 10;
+                } else {
+                  doc.setFont("helvetica", "italic");
+                  doc.setFontSize(9);
+                  doc.setTextColor(150, 150, 150);
+                  doc.text(
+                    `Diagram could not be rendered: ${error || "Unknown error"}`,
+                    marginLeft + 10,
+                    yPosition
+                  );
+                  yPosition += 8;
+                  if (code) {
+                    doc.setFont("helvetica", "normal");
+                    doc.setFontSize(8);
+                    const codeLines = doc.splitTextToSize(`Mermaid Code: ${code}`, maxWidth - 20);
+                    codeLines.forEach((line) => {
+                      if (yPosition > 250) {
+                        doc.addPage();
+                        yPosition = marginTop;
+                        doc.setLineWidth(0.3);
+                        doc.setDrawColor(...grayColor);
+                        doc.rect(10, 10, pageWidth - 20, pageHeight - 20, "S");
+                      }
+                      doc.text(line, marginLeft + 10, yPosition);
+                      yPosition += 6;
+                    });
+                  }
                 }
-                doc.text(textLine, marginLeft + 5, yPosition);
-                if (lineIndex < textLines.length - 1) yPosition += 5;
-              });
+              } catch (error) {
+                doc.setFont("helvetica", "italic");
+                doc.setFontSize(9);
+                doc.setTextColor(150, 150, 150);
+                doc.text(`Error rendering ${diagramTitle}: ${error.message}`, marginLeft + 10, yPosition);
+                yPosition += 8;
+              }
+              yPosition += 5;
             }
-
-            yPosition += 6;
-          } else {
-            yPosition += 3;
           }
-        });
-      } else {
-        doc.setFont("helvetica", "italic");
-        doc.setFontSize(10);
-        doc.setTextColor(...grayColor);
-        doc.text("No requirements found", marginLeft + 5, yPosition);
-        yPosition += 6;
+        } catch (error) {
+          console.error("Error processing graphs for file:", {
+            file: file.file_name,
+            message: error.message,
+          });
+        }
+
+        yPosition += 10;
       }
+    } catch (error) {
+      console.error("Error processing file analysis:", { message: error.message });
+    }
 
-      yPosition += 10;
-    });
-
+    // Page numbers and footer
     const pageCount = doc.internal.getNumberOfPages();
     const currentDate = new Date().toLocaleDateString();
-
     for (let i = 1; i <= pageCount; i++) {
       doc.setPage(i);
-
       doc.setFontSize(9);
       doc.setTextColor(100, 100, 100);
       doc.setFont("helvetica", "normal");
-
       doc.text("App Discovery & Knowledge Management System", marginLeft, footerY);
-
       const dateText = `Generated: ${currentDate}`;
       const dateWidth = doc.getTextWidth(dateText);
       doc.text(dateText, (pageWidth - dateWidth) / 2, footerY);
-
       const pageText = `Page ${i} of ${pageCount}`;
-      const pageWidth_text = doc.getTextWidth(pageText);
-      doc.text(pageText, pageWidth - marginLeft - pageWidth_text, footerY);
+      const pageTextWidth = doc.getTextWidth(pageText);
+      doc.text(pageText, pageWidth - marginLeft - pageTextWidth, footerY);
     }
 
+    // Save the PDF
     const timestamp = new Date().toISOString().split("T")[0];
-    doc.save(`CodebaseAnalysis_${folderName.replace(/[/\\:*?"<>|]/g, "_")}_${timestamp}.pdf`);
+    const fileName = `CodebaseAnalysis_${folderName.replace(/[/\\:*?"<>|]/g, "_")}_${timestamp}.pdf`;
+    doc.save(fileName);
   };
 
   // Steps for loading overlay
@@ -492,42 +913,38 @@ export default function Dashboard() {
       id: 1,
       label: "Fetching from S3",
       description: "Securely retrieving codebase assets from the configured Amazon S3 bucket.",
-      iconActive: "/src/assets/icons/1.png.png",
-      iconInactive: "/src/assets/icons/1.png.png",
+      iconActive: "/src/assets/icons/1.png",
+      iconInactive: "/src/assets/icons/1.png",
     },
     {
       id: 2,
       label: "Analyzing Files",
       description: "Performing structural and dependency analysis on the retrieved codebase.",
-      iconActive: "/src/assets/icons/2.png.png",
-      iconInactive: "/src/assets/icons/2.png.png",
+      iconActive: "/src/assets/icons/2.png",
+      iconInactive: "/src/assets/icons/2.png",
     },
     {
       id: 3,
       label: "Generating Business Logic",
       description: "Extracting actionable business rules and functional insights from application logic.",
-      iconActive: "/src/assets/icons/3.png.png",
-      iconInactive: "/src/assets/icons/3.png.png",
+      iconActive: "/src/assets/icons/3.png",
+      iconInactive: "/src/assets/icons/3.png",
     },
     {
       id: 4,
       label: "Finalizing",
       description: "Compiling a comprehensive report based on the processed data for review.",
-      iconActive: "/src/assets/icons/4.png.png",
-      iconInactive: "/src/assets/icons/4.png.png",
+      iconActive: "/src/assets/icons/4.png",
+      iconInactive: "/src/assets/icons/4.png",
     },
   ];
-  
-  
+
   const currentStep = Math.floor(loadingProgress / 45) + 1;
-  
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-100 to-teal-50 font-sans">
       <Navbar />
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 h-[calc(100vh-70px)] overflow-y-auto">
-        
-
         {/* Header Section */}
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-gray-900 tracking-tight">
@@ -653,74 +1070,71 @@ export default function Dashboard() {
 
               {/* Generation Section */}
               {loading && (
-  <div className="mt-6 p-6 bg-white rounded-2xl shadow-xl border border-green-200">
-    <h3 className="text-xl font-bold text-green-800 mb-5 flex items-center gap-3">
-      <Activity className="w-6 h-6 animate-pulse" />
-      Analysis in Progress
-    </h3>
+                <div className="mt-6 p-6 bg-white rounded-2xl shadow-xl border border-green-200">
+                  <h3 className="text-xl font-bold text-green-800 mb-5 flex items-center gap-3">
+                    <Activity className="w-6 h-6 animate-pulse" />
+                    Analysis in Progress
+                  </h3>
 
-    <div className="relative pl-10">
-      {steps.map((step, index) => {
-        const isCompleted = step.id < currentStep;
-        const isActive = step.id === currentStep;
+                  <div className="relative pl-10">
+                    {steps.map((step, index) => {
+                      const isCompleted = step.id < currentStep;
+                      const isActive = step.id === currentStep;
 
-        return (
-          <div key={step.id} className="relative mb-6 last:mb-0">
-            {/* Connector line */}
-            {index < steps.length - 1 && (
-              <div
-                className={`absolute left-5 top-8 w-[2px] z-0 ${
-                  isCompleted ? "bg-green-500" : "bg-gray-300"
-                }`}
-                style={{ height: "calc(100% + 12px)" }}
-              />
-            )}
+                      return (
+                        <div key={step.id} className="relative mb-6 last:mb-0">
+                          {/* Connector line */}
+                          {index < steps.length - 1 && (
+                            <div
+                              className={`absolute left-5 top-8 w-[2px] z-0 ${
+                                isCompleted ? "bg-green-500" : "bg-gray-300"
+                              }`}
+                              style={{ height: "calc(100% + 12px)" }}
+                            />
+                          )}
 
-            {/* Step */}
-            <div
-              className={`relative z-10 flex items-start gap-4 py-2 transition-all duration-300 ${
-                isCompleted
-                  ? "text-green-900"
-                  : isActive
-                  ? "text-green-700"
-                  : "text-gray-400"
-              }`}
-            >
-              <div
-                className={`w-10 h-10 rounded-full flex items-center justify-center border-2 shadow-sm transition-all duration-300 ${
-                  isCompleted
-                    ? "bg-green-100 border-green-600"
-                    : isActive
-                    ? "bg-green-50 border-green-500 animate-pulse"
-                    : "bg-gray-50 border-gray-300"
-                }`}
-              >
-                {isCompleted ? (
-                  <CheckCircle className="w-6 h-6 text-green-600" />
-                ) : (
-                  <img
-                    src={isActive ? step.iconActive : step.iconInactive}
-                    alt={step.label}
-                    className="w-8 h-8"
-                  />
-                )}
-              </div>
+                          {/* Step */}
+                          <div
+                            className={`relative z-10 flex items-start gap-4 py-2 transition-all duration-300 ${
+                              isCompleted
+                                ? "text-green-900"
+                                : isActive
+                                ? "text-green-700"
+                                : "text-gray-400"
+                            }`}
+                          >
+                            <div
+                              className={`w-10 h-10 rounded-full flex items-center justify-center border-2 shadow-sm transition-all duration-300 ${
+                                isCompleted
+                                  ? "bg-green-100 border-green-600"
+                                  : isActive
+                                  ? "bg-green-50 border-green-500 animate-pulse"
+                                  : "bg-gray-50 border-gray-300"
+                              }`}
+                            >
+                              {isCompleted ? (
+                                <CheckCircle className="w-6 h-6 text-green-600" />
+                              ) : (
+                                <img
+                                  src={isActive ? step.iconActive : step.iconInactive}
+                                  alt={step.label}
+                                  className="w-8 h-8"
+                                />
+                              )}
+                            </div>
 
-              <div className="flex-1">
-                <span className="text-base font-bold leading-snug text-black">
-                  {step.label}
-                </span>
-                <p className="text-sm mt-1 text-gray-800 font-medium leading-relaxed tracking-tight">
-                  {step.description}
-                </p>
-              </div>
-            </div>
-          </div>
+                            <div className="flex-1">
+                              <span className="text-base font-bold leading-snug text-black">
+                                {step.label}
+                              </span>
+                              <p className="text-sm mt-1 text-gray-800 font-medium leading-relaxed tracking-tight">
+                                {step.description}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
                       );
                     })}
-                    <div className="mt-4 text-right text-sm text-green-700 font-semibold pr-4">
-                      
-                    </div>
                   </div>
                 </div>
               )}
@@ -758,7 +1172,7 @@ export default function Dashboard() {
                   </button>
 
                   <button
-                    onClick={downloadPDF}
+                    onClick={() => downloadPDF(projectSummary, summaryGraphResponses, result, folderName, quickStats)}
                     className="bg-teal-700 hover:bg-teal-800 text-white py-3 rounded-lg flex justify-center items-center gap-3 font-semibold text-sm transition-all hover:shadow-lg"
                   >
                     <Download className="w-5 h-5" />
